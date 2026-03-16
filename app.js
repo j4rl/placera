@@ -18,8 +18,14 @@ async function apiRequest(url,opts={}){
   if(cfg.body&&!cfg.headers)cfg.headers=API_HEADERS;
   else if(cfg.body)cfg.headers={...API_HEADERS,...cfg.headers};
   const res=await fetch(url,cfg);
-  if(!res.ok)throw new Error('HTTP '+res.status);
-  return res.json();
+  let data=null;
+  try{data=await res.json()}catch{data=null}
+  if(!res.ok){
+    const err=new Error(data?.error||('HTTP '+res.status));
+    err.data=data;
+    throw err;
+  }
+  return data||{};
 }
 
 function queuePersist(key,val){
@@ -81,6 +87,13 @@ const EDITOR_DH=50;
 const EDITOR_TOP_OFFSET=56;
 const EDITOR_SIDE_PAD=16;
 
+function updateUserBadge(){
+  const nameEl=document.getElementById('user-name-text');
+  const roleEl=document.getElementById('user-role-text');
+  if(nameEl)nameEl.textContent=currentUser?.fullName||'';
+  if(roleEl)roleEl.textContent=currentUser?.role||'';
+}
+
 // ═══════════════ NAV ═══════════════
 function showView(n){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -91,6 +104,7 @@ function showView(n){
   if(idx>=0)document.querySelectorAll('.nav-btn')[idx].classList.add('active');
   if(n==='home')renderHome();
   if(n==='saved')renderSavedList();
+  if(n==='profile')renderProfile();
   if(n==='admin')renderAdmin();
 }
 
@@ -485,6 +499,52 @@ function deleteSaved(id){
   renderSavedList();
 }
 
+// ═══════════════ PROFILE ═══════════════
+function renderProfile(){
+  if(!currentUser)return;
+  const u=document.getElementById('profile-username');
+  const f=document.getElementById('profile-fullname');
+  const e=document.getElementById('profile-email');
+  const p1=document.getElementById('profile-password1');
+  const p2=document.getElementById('profile-password2');
+  if(u)u.value=currentUser.username||'';
+  if(f)f.value=currentUser.fullName||'';
+  if(e)e.value=currentUser.email||'';
+  if(p1)p1.value='';
+  if(p2)p2.value='';
+}
+
+async function saveProfile(){
+  const fullName=(document.getElementById('profile-fullname')?.value||'').trim();
+  const email=(document.getElementById('profile-email')?.value||'').trim();
+  const password=(document.getElementById('profile-password1')?.value||'');
+  const password2=(document.getElementById('profile-password2')?.value||'');
+
+  if(fullName.length<2){alert('Ange ditt riktiga namn.');return}
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){alert('Ogiltig e-postadress.');return}
+  if(password!==''&&password.length<8){alert('Nytt lösenord måste vara minst 8 tecken.');return}
+  if(password!==password2){alert('Lösenorden matchar inte.');return}
+
+  try{
+    const res=await apiRequest('api/profile.php',{
+      method:'POST',
+      body:JSON.stringify({fullName,email,password,password2})
+    });
+    if(!res?.ok||!res.user){
+      alert('Kunde inte spara profil.');
+      return;
+    }
+    currentUser=res.user;
+    isSiteAdmin=(currentUser?.role||'')==='admin';
+    updateUserBadge();
+    renderProfile();
+    showToast('✓ Profil sparad!');
+  }catch(e){
+    console.error(e);
+    alert(e?.data?.message||'Kunde inte spara profil.');
+  }
+}
+
 // ═══════════════ CONFETTI ═══════════════
 function confetti(){
   const w=document.getElementById('cfWrap');w.innerHTML='';
@@ -504,11 +564,11 @@ function adminLogout(){
   window.location.href='logout.php';
 }
 function aTab(t){
-  const tabs=['rooms','classes','settings'];
+  const tabs=['rooms','classes','users'];
   document.querySelectorAll('.atab').forEach((b,i)=>b.classList.toggle('active',tabs[i]===t));
   document.querySelectorAll('.asec').forEach(s=>s.classList.remove('active'));
   document.getElementById('asec-'+t).classList.add('active');
-  if(t==='settings'&&isSiteAdmin)renderUserRequests();
+  if(t==='users'&&isSiteAdmin)renderAdminUsersSection();
 }
 function renderAdmin(){
   const login=document.getElementById('admin-login-screen');
@@ -530,7 +590,7 @@ function renderAdmin(){
   panel.style.display='block';
   renderRoomList();
   renderClassList();
-  loadAdminUsers().then(renderUserRequests);
+  loadAdminUsers().then(renderAdminUsersSection);
 }
 
 function fmtMetaDate(s){
@@ -565,25 +625,111 @@ async function adminUserAction(action,userId,role='teacher'){
   try{
     const data=await apiRequest('api/admin_users.php',{method:'POST',body:JSON.stringify({action,userId,role})});
     adminUsersCache=Array.isArray(data?.users)?data.users:[];
-    renderUserRequests();
+    renderAdminUsersSection();
   }catch(e){
     console.error(e);
     showToast('Kunde inte uppdatera användare.');
   }
 }
 
-function renderUserRequests(){
-  const host=document.getElementById('pending-users-list');
-  if(!host)return;
+function findAdminUserById(userId){
+  return adminUsersCache.find(u=>Number(u.id)===Number(userId))||null;
+}
+
+function openAdminUserModal(userId){
+  const u=findAdminUserById(userId);
+  if(!u)return;
+  const self=Number(u.id)===Number(currentUser?.id);
+  document.getElementById('admin-user-id').value=String(u.id);
+  document.getElementById('admin-user-username').value=u.username||'';
+  document.getElementById('admin-user-fullname').value=u.fullName||'';
+  document.getElementById('admin-user-email').value=u.email||'';
+  document.getElementById('admin-user-role').value=u.role||'teacher';
+  document.getElementById('admin-user-status').value=u.status||'approved';
+  document.getElementById('admin-user-password1').value='';
+  document.getElementById('admin-user-password2').value='';
+  document.getElementById('admin-user-role').disabled=self;
+  document.getElementById('admin-user-status').disabled=self;
+  openModal('admin-user-modal');
+}
+
+async function saveAdminUserEdit(){
+  const userId=parseInt(document.getElementById('admin-user-id').value,10)||0;
+  if(userId<=0)return;
+  const username=(document.getElementById('admin-user-username').value||'').trim();
+  const fullName=(document.getElementById('admin-user-fullname').value||'').trim();
+  const email=(document.getElementById('admin-user-email').value||'').trim();
+  const role=(document.getElementById('admin-user-role').value||'teacher').trim();
+  const status=(document.getElementById('admin-user-status').value||'approved').trim();
+  const password=(document.getElementById('admin-user-password1').value||'');
+  const password2=(document.getElementById('admin-user-password2').value||'');
+
+  if(!/^[A-Za-z0-9_.-]{3,50}$/.test(username)){alert('Användarnamn måste vara 3-50 tecken (A-Z, 0-9, _, -, .).');return}
+  if(fullName.length<2){alert('Ange riktigt namn.');return}
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){alert('Ogiltig e-postadress.');return}
+  if(password!==''&&password.length<8){alert('Nytt lösenord måste vara minst 8 tecken.');return}
+  if(password!==password2){alert('Lösenorden matchar inte.');return}
+
+  try{
+    const data=await apiRequest('api/admin_users.php',{
+      method:'POST',
+      body:JSON.stringify({action:'update_user',userId,username,fullName,email,role,status,password,password2})
+    });
+    adminUsersCache=Array.isArray(data?.users)?data.users:[];
+    const updated=findAdminUserById(userId);
+    if(updated&&Number(currentUser?.id)===userId){
+      currentUser={...currentUser,username:updated.username,fullName:updated.fullName,email:updated.email,role:updated.role};
+      isSiteAdmin=(currentUser?.role||'')==='admin';
+      updateUserBadge();
+      renderProfile();
+    }
+    renderAdminUsersSection();
+    closeModal('admin-user-modal');
+    showToast('✓ Användare uppdaterad');
+  }catch(e){
+    console.error(e);
+    alert(e?.data?.message||'Kunde inte spara användaren.');
+  }
+}
+
+function renderAdminUsersSection(){
+  const pendingHost=document.getElementById('pending-users-list');
+  const existingHost=document.getElementById('existing-users-list');
+  if(!pendingHost||!existingHost)return;
   if(!isSiteAdmin){
-    host.innerHTML='<p class="muted">Ingen behörighet.</p>';
+    pendingHost.innerHTML='<p class="muted">Ingen behörighet.</p>';
+    existingHost.innerHTML='<p class="muted">Ingen behörighet.</p>';
     return;
   }
-  if(!adminUsersCache.length){
-    host.innerHTML='<p class="muted">Inga användare att visa.</p>';
+  const pending=adminUsersCache.filter(u=>u.status==='pending');
+  const existing=adminUsersCache.filter(u=>u.status!=='pending');
+
+  if(!pending.length){
+    pendingHost.innerHTML='<p class="muted">Inga väntande ansökningar.</p>';
+  }else{
+    pendingHost.innerHTML=pending.map(u=>{
+      const created=fmtMetaDate(u.createdAt);
+      const meta=[u.email,created?`Ansökt ${created}`:''].filter(Boolean).join(' · ');
+      return`<div class="list-item">
+        <div>
+          <div class="li-name">${escH(u.fullName)} <span class="hint" style="margin:0">(@${escH(u.username)})</span></div>
+          <div class="li-sub">${escH(meta)}</div>
+        </div>
+        <div class="flex gap2">
+          <button class="btn btn-secondary btn-sm" onclick="openAdminUserModal(${u.id})">Öppna</button>
+          <button class="btn btn-primary btn-sm" onclick="adminUserAction('approve',${u.id},'teacher')">Godkänn</button>
+          <button class="btn btn-danger btn-sm" onclick="adminUserAction('reject',${u.id})">Avslå</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  if(!existing.length){
+    existingHost.innerHTML='<p class="muted">Inga användare att visa.</p>';
     return;
   }
-  host.innerHTML=adminUsersCache.map(u=>{
+
+  existingHost.innerHTML=existing.map(u=>{
     const created=fmtMetaDate(u.createdAt);
     const approved=fmtMetaDate(u.approvedAt);
     const self=(u.id===Number(currentUser?.id));
@@ -592,16 +738,17 @@ function renderUserRequests(){
       created?`Ansökt ${created}`:'',
       approved?`Godkänd ${approved}${u.approvedByName?` av ${u.approvedByName}`:''}`:''
     ].filter(Boolean).join(' · ');
-    let actions='';
-    if(u.status==='pending'){
-      actions=`<button class="btn btn-primary btn-sm" onclick="adminUserAction('approve',${u.id},'teacher')">Godkänn</button>
-      <button class="btn btn-danger btn-sm" onclick="adminUserAction('reject',${u.id})">Avslå</button>`;
-    }else if(u.status==='approved'&&!self){
-      actions=`<button class="btn btn-danger btn-sm" onclick="adminUserAction('disable',${u.id})">Inaktivera</button>`;
-    }else if(u.status==='disabled'){
-      actions=`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('enable',${u.id})">Aktivera</button>`;
-    }else{
-      actions='<span class="hint" style="margin:0">-</span>';
+    const editBtn=`<button class="btn btn-secondary btn-sm" onclick="openAdminUserModal(${u.id})">Öppna</button>`;
+    let actions=editBtn;
+    if(u.status==='approved'&&!self){
+      const roleBtn=u.role==='admin'
+        ?`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('set_role',${u.id},'teacher')">Gör lärare</button>`
+        :`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('set_role',${u.id},'admin')">Gör admin</button>`;
+      actions=`${editBtn}${roleBtn}<button class="btn btn-danger btn-sm" onclick="adminUserAction('disable',${u.id})">Inaktivera</button>`;
+    }else if(u.status==='disabled'||u.status==='rejected'){
+      actions=`${editBtn}<button class="btn btn-secondary btn-sm" onclick="adminUserAction('enable',${u.id})">Aktivera</button>${
+        !self&&u.role!=='admin'?`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('set_role',${u.id},'admin')">Gör admin</button>`:''
+      }`;
     }
     return`<div class="list-item">
       <div>
@@ -1424,6 +1571,7 @@ async function refreshStateFromServer(){
   if(data.user){
     currentUser=data.user;
     isSiteAdmin=(currentUser?.role||'')==='admin';
+    updateUserBadge();
   }
   if(isSiteAdmin)await loadAdminUsers();
 }
@@ -1431,6 +1579,7 @@ async function refreshStateFromServer(){
 async function initApp(){
   const savedTheme=DB.get('theme','auto');
   setTheme(savedTheme);
+  updateUserBadge();
   try{
     await refreshStateFromServer();
   }catch(e){

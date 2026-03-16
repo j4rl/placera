@@ -27,22 +27,24 @@ $boot = [
 
 <header>
   <div class="logo">Klass<span>placering</span></div>
-  <nav>
+  <nav class="main-nav">
     <button class="nav-btn active" onclick="showView('home')">Placera</button>
     <button class="nav-btn" onclick="showView('saved')">Placeringar</button>
     <button class="nav-btn" onclick="showView('admin')">Admin</button>
   </nav>
-  <div class="user-pill" id="user-pill">
-    <div class="user-meta">
-      <div class="user-name"><?= htmlspecialchars((string)$user['full_name'], ENT_QUOTES, 'UTF-8') ?></div>
-      <div class="user-role"><?= htmlspecialchars((string)$user['role'], ENT_QUOTES, 'UTF-8') ?></div>
+  <div class="header-right">
+    <div class="user-pill" id="user-pill">
+      <button type="button" class="user-meta-btn" onclick="showView('profile')" title="Min profil">
+        <span class="user-name" id="user-name-text"><?= htmlspecialchars((string)$user['full_name'], ENT_QUOTES, 'UTF-8') ?></span>
+        <span class="user-role" id="user-role-text"><?= htmlspecialchars((string)$user['role'], ENT_QUOTES, 'UTF-8') ?></span>
+      </button>
+      <a class="btn btn-secondary btn-sm" href="logout.php">Logga ut</a>
     </div>
-    <a class="btn btn-secondary btn-sm" href="logout.php">Logga ut</a>
-  </div>
-  <div class="theme-toggle" id="theme-toggle">
-    <button class="theme-opt" onclick="setTheme('light')" title="Ljust">☀️</button>
-    <button class="theme-opt" onclick="setTheme('auto')" title="Auto">⚙️</button>
-    <button class="theme-opt" onclick="setTheme('dark')" title="Mörkt">🌙</button>
+    <div class="theme-toggle" id="theme-toggle">
+      <button class="theme-opt" onclick="setTheme('light')" title="Ljust">☀️</button>
+      <button class="theme-opt" onclick="setTheme('auto')" title="Auto">⚙️</button>
+      <button class="theme-opt" onclick="setTheme('dark')" title="Mörkt">🌙</button>
+    </div>
   </div>
 </header>
 
@@ -109,6 +111,44 @@ $boot = [
   <div id="saved-list"></div>
 </div>
 
+<!-- PROFILE -->
+<div class="view" id="profile-view">
+  <div style="max-width:660px;margin:0 auto">
+    <div class="section-title">Min profil</div>
+    <p class="muted" style="font-size:.84rem;margin-bottom:14px">Redigera dina uppgifter. Klicka på ditt namn i headern för att komma hit.</p>
+    <div class="card">
+      <div class="card-title">Profiluppgifter</div>
+      <div class="fg">
+        <label>Användarnamn</label>
+        <input type="text" id="profile-username" autocomplete="username" readonly>
+        <p class="hint">Användarnamn kan inte ändras.</p>
+      </div>
+      <div class="fg">
+        <label>Riktigt namn</label>
+        <input type="text" id="profile-fullname" autocomplete="name">
+      </div>
+      <div class="fg">
+        <label>E-post</label>
+        <input type="email" id="profile-email" autocomplete="email">
+      </div>
+      <hr>
+      <div class="card-title" style="margin-top:0">Byt lösenord (valfritt)</div>
+      <div class="fg">
+        <label>Nytt lösenord</label>
+        <input type="password" id="profile-password1" autocomplete="new-password">
+      </div>
+      <div class="fg">
+        <label>Bekräfta nytt lösenord</label>
+        <input type="password" id="profile-password2" autocomplete="new-password">
+      </div>
+      <div class="flex gap2" style="justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-secondary" onclick="renderProfile()">Återställ</button>
+        <button class="btn btn-primary" onclick="saveProfile()">Spara profil</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ADMIN -->
 <div class="view" id="admin-view">
   <div id="admin-login-screen" class="admin-login">
@@ -123,7 +163,7 @@ $boot = [
     <div class="atabs">
       <button class="atab active" onclick="aTab('rooms')">Salar</button>
       <button class="atab" onclick="aTab('classes')">Klasser</button>
-      <button class="atab" onclick="aTab('settings')">Inställningar</button>
+      <button class="atab" onclick="aTab('users')">Användare</button>
     </div>
     <div class="asec active" id="asec-rooms">
       <div class="flex gap3" style="align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -139,21 +179,75 @@ $boot = [
       </div>
       <div id="class-list"></div>
     </div>
-    <div class="asec" id="asec-settings">
+    <div class="asec" id="asec-users">
       <div class="card">
         <div class="card-title">Användaransökningar</div>
-        <p class="hint" style="margin-bottom:10px">Godkänn nya lärare och hantera kontostatus.</p>
+        <p class="hint" style="margin-bottom:10px">Godkänn eller avslå nya registreringar.</p>
         <div id="pending-users-list"></div>
       </div>
       <div class="card" style="margin-top:14px">
-        <div class="card-title">Kontaktuppgifter</div>
-        <p class="muted" style="font-size:.82rem">Alla användare har användarnamn, riktigt namn och e-post för intern kontakt och spårbarhet.</p>
+        <div class="card-title">Befintliga användare</div>
+        <p class="hint" style="margin-bottom:10px">Hantera roller och kontostatus för godkända användare.</p>
+        <div id="existing-users-list"></div>
       </div>
     </div>
   </div>
 </div>
 
 </main>
+
+<!-- ADMIN USER MODAL -->
+<div class="overlay hidden" id="admin-user-modal">
+<div class="modal" style="width:min(96vw,520px)">
+  <button class="modal-close" onclick="closeModal('admin-user-modal')">✕</button>
+  <div class="modal-title">Redigera användare</div>
+  <input type="hidden" id="admin-user-id">
+  <div class="fg">
+    <label>Användarnamn</label>
+    <input type="text" id="admin-user-username" autocomplete="off">
+  </div>
+  <div class="fg">
+    <label>Riktigt namn</label>
+    <input type="text" id="admin-user-fullname" autocomplete="name">
+  </div>
+  <div class="fg">
+    <label>E-post</label>
+    <input type="email" id="admin-user-email" autocomplete="email">
+  </div>
+  <div class="flex gap2">
+    <div class="fg" style="flex:1">
+      <label>Roll</label>
+      <select id="admin-user-role">
+        <option value="teacher">Lärare</option>
+        <option value="admin">Admin</option>
+      </select>
+    </div>
+    <div class="fg" style="flex:1">
+      <label>Status</label>
+      <select id="admin-user-status">
+        <option value="pending">Pending</option>
+        <option value="approved">Approved</option>
+        <option value="disabled">Disabled</option>
+        <option value="rejected">Rejected</option>
+      </select>
+    </div>
+  </div>
+  <hr>
+  <div class="card-title" style="margin-top:0">Byt lösenord (valfritt)</div>
+  <div class="fg">
+    <label>Nytt lösenord</label>
+    <input type="password" id="admin-user-password1" autocomplete="new-password">
+  </div>
+  <div class="fg">
+    <label>Bekräfta nytt lösenord</label>
+    <input type="password" id="admin-user-password2" autocomplete="new-password">
+  </div>
+  <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
+    <button class="btn btn-secondary" onclick="closeModal('admin-user-modal')">Avbryt</button>
+    <button class="btn btn-primary" onclick="saveAdminUserEdit()">Spara användare</button>
+  </div>
+</div>
+</div>
 
 <!-- ROOM EDITOR MODAL -->
 <div class="overlay hidden" id="editor-modal">

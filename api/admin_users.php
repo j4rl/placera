@@ -45,16 +45,34 @@ $body = plc_read_json_body();
 $action = (string)($body['action'] ?? '');
 $targetId = (int)($body['userId'] ?? 0);
 $targetRole = (string)($body['role'] ?? 'teacher');
+$targetStatus = (string)($body['status'] ?? 'approved');
+$username = trim((string)($body['username'] ?? ''));
+$fullName = trim((string)($body['fullName'] ?? ''));
+$emailInput = trim((string)($body['email'] ?? ''));
+$email = function_exists('mb_strtolower') ? mb_strtolower($emailInput) : strtolower($emailInput);
+$password = (string)($body['password'] ?? '');
+$password2 = (string)($body['password2'] ?? '');
 
 if ($targetId <= 0) {
     plc_json(['ok' => false, 'error' => 'invalid_user'], 400);
 }
-if ($targetId === (int)$admin['id'] && in_array($action, ['reject', 'disable'], true)) {
-    plc_json(['ok' => false, 'error' => 'cannot_disable_self'], 400);
+if ($targetId === (int)$admin['id'] && in_array($action, ['reject', 'disable', 'set_role'], true)) {
+    plc_json(['ok' => false, 'error' => 'forbidden_self_action'], 400);
 }
 
 if (!in_array($targetRole, ['teacher', 'admin'], true)) {
     $targetRole = 'teacher';
+}
+if (!in_array($targetStatus, ['pending', 'approved', 'disabled', 'rejected'], true)) {
+    $targetStatus = 'approved';
+}
+
+$stmt = $db->prepare('SELECT id, role, status FROM plc_users WHERE id = ? LIMIT 1');
+$stmt->bind_param('i', $targetId);
+$stmt->execute();
+$targetUser = $stmt->get_result()->fetch_assoc();
+if (!$targetUser) {
+    plc_json(['ok' => false, 'error' => 'invalid_user'], 400);
 }
 
 try {
@@ -91,11 +109,85 @@ try {
         $status = 'approved';
         $stmt = $db->prepare(
             'UPDATE plc_users
-             SET status = ?, updated_at = NOW()
+             SET status = ?, approved_by_user_id = ?, approved_at = COALESCE(approved_at, NOW()), updated_at = NOW()
              WHERE id = ?'
         );
-        $stmt->bind_param('si', $status, $targetId);
+        $adminId = (int)$admin['id'];
+        $stmt->bind_param('sii', $status, $adminId, $targetId);
         $stmt->execute();
+    } elseif ($action === 'set_role') {
+        $stmt = $db->prepare(
+            'UPDATE plc_users
+             SET role = ?, updated_at = NOW()
+             WHERE id = ?'
+        );
+        $stmt->bind_param('si', $targetRole, $targetId);
+        $stmt->execute();
+    } elseif ($action === 'update_user') {
+        $fullNameLen = function_exists('mb_strlen') ? mb_strlen($fullName) : strlen($fullName);
+        if (!preg_match('/^[A-Za-z0-9_.-]{3,50}$/', $username)) {
+            plc_json(['ok' => false, 'error' => 'invalid_username', 'message' => 'Ogiltigt användarnamn.'], 422);
+        }
+        if ($fullNameLen < 2) {
+            plc_json(['ok' => false, 'error' => 'invalid_name', 'message' => 'Ange riktigt namn.'], 422);
+        }
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            plc_json(['ok' => false, 'error' => 'invalid_email', 'message' => 'Ogiltig e-postadress.'], 422);
+        }
+        if ($password !== '' && strlen($password) < 8) {
+            plc_json(['ok' => false, 'error' => 'invalid_password', 'message' => 'Lösenord måste vara minst 8 tecken.'], 422);
+        }
+        if ($password !== $password2) {
+            plc_json(['ok' => false, 'error' => 'password_mismatch', 'message' => 'Lösenorden matchar inte.'], 422);
+        }
+
+        if ($targetId === (int)$admin['id']) {
+            if ($targetRole !== (string)$targetUser['role'] || $targetStatus !== 'approved') {
+                plc_json(['ok' => false, 'error' => 'forbidden_self_action', 'message' => 'Du kan inte ändra egen roll eller status här.'], 400);
+            }
+        }
+
+        $stmt = $db->prepare(
+            'SELECT id
+             FROM plc_users
+             WHERE (username = ? OR email = ?) AND id <> ?
+             LIMIT 1'
+        );
+        $stmt->bind_param('ssi', $username, $email, $targetId);
+        $stmt->execute();
+        $exists = $stmt->get_result()->fetch_assoc();
+        if ($exists) {
+            plc_json(['ok' => false, 'error' => 'duplicate_user', 'message' => 'Användarnamn eller e-post används redan.'], 409);
+        }
+
+        if ($password !== '') {
+            $hash = password_hash($password, PASSWORD_DEFAULT);
+            $stmt = $db->prepare(
+                'UPDATE plc_users
+                 SET username = ?, full_name = ?, email = ?, role = ?, status = ?, password_hash = ?, updated_at = NOW()
+                 WHERE id = ?'
+            );
+            $stmt->bind_param('ssssssi', $username, $fullName, $email, $targetRole, $targetStatus, $hash, $targetId);
+            $stmt->execute();
+        } else {
+            $stmt = $db->prepare(
+                'UPDATE plc_users
+                 SET username = ?, full_name = ?, email = ?, role = ?, status = ?, updated_at = NOW()
+                 WHERE id = ?'
+            );
+            $stmt->bind_param('sssssi', $username, $fullName, $email, $targetRole, $targetStatus, $targetId);
+            $stmt->execute();
+        }
+        if ($targetStatus === 'approved') {
+            $stmt = $db->prepare(
+                'UPDATE plc_users
+                 SET approved_by_user_id = ?, approved_at = COALESCE(approved_at, NOW()), updated_at = NOW()
+                 WHERE id = ?'
+            );
+            $adminId = (int)$admin['id'];
+            $stmt->bind_param('ii', $adminId, $targetId);
+            $stmt->execute();
+        }
     } else {
         plc_json(['ok' => false, 'error' => 'invalid_action'], 400);
     }
@@ -104,4 +196,3 @@ try {
 }
 
 plc_json(['ok' => true, 'users' => plc_fetch_admin_users($db)]);
-
