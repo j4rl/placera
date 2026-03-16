@@ -1,24 +1,22 @@
-# Placera (PHP + mysqli)
+# Placera
 
-## Setup
-1. Create a MySQL database (default expected name: `placera`).
-2. Import schema:
-   - `sql/plc_schema.sql`
-3. Configure DB credentials in environment variables (optional) or keep defaults:
-   - `PLC_DB_HOST`
-   - `PLC_DB_PORT`
-   - `PLC_DB_NAME`
-   - `PLC_DB_USER`
-   - `PLC_DB_PASS`
-4. Open `index.php` in browser.
+Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare att snabbt skapa, slumpa, justera, spara och skriva ut elevplaceringar i olika salar.
 
-## Auth flow
-- New registration creates a `pending` user.
-- First registered user is auto-approved as `admin`.
-- Admin can approve/reject users in Admin -> Inställningar.
+## Vem appen är till för
+- Lärare som behöver skapa och hantera sittplatser på ett snabbt och tydligt sätt.
+- Arbetslag och ämneslag som vill kunna återanvända salar och placeringar.
+- Skoladministratörer som vill styra vilka användare som får tillgång till systemet.
 
-## Data model
-- All tables are prefixed with `plc_`.
-- Rooms, classes and placements are persisted in MySQL (not localStorage).
-- Audit fields are included (`created_by`, `created_at`, `updated_by`, `updated_at`).
+## Vad appen gör
+- Hanterar klasser och elevlistor.
+- Hanterar salar och bänkplaceringar via visuell editor.
+- Slumpar placeringar automatiskt utifrån vald klass och sal.
+- Låter användaren finjustera placeringar manuellt.
+- Sparar placeringar för senare användning.
+- Ger möjlighet till direktutskrift och nedladdning som PDF.
 
+## Användar- och säkerhetsflöde
+- Nya användare skickar en ansökan om konto.
+- Admin godkänner eller avslår ansökningar.
+- Godkända användare kan logga in och använda verktyget.
+- Systemet sparar vem som skapat eller uppdaterat salar och placeringar, samt när det gjordes.
