@@ -1,12 +1,63 @@
 // ═══════════════ DB ═══════════════
-const DB={
-  get(k,d){try{const v=localStorage.getItem('kp3_'+k);return v?JSON.parse(v):d}catch{return d}},
-  set(k,v){try{localStorage.setItem('kp3_'+k,JSON.stringify(v))}catch{}}
+const APP_BOOT=window.APP_BOOT||{};
+const API_HEADERS={
+  'Content-Type':'application/json',
+  'X-CSRF-Token':APP_BOOT.csrf||''
 };
-if(!DB.get('pw',null))DB.set('pw','admin123');
-if(!DB.get('rooms',null))DB.set('rooms',[]);
-if(!DB.get('classes',null))DB.set('classes',[]);
-if(!DB.get('saved',null))DB.set('saved',[]);
+let currentUser=APP_BOOT.user||null;
+let isSiteAdmin=(currentUser?.role||'')==='admin';
+let serverState={rooms:[],classes:[],saved:[]};
+let persistQueue=Promise.resolve();
+
+function cloneDeep(v){
+  try{return structuredClone(v)}catch{return JSON.parse(JSON.stringify(v))}
+}
+
+async function apiRequest(url,opts={}){
+  const cfg={credentials:'same-origin',...opts};
+  if(cfg.body&&!cfg.headers)cfg.headers=API_HEADERS;
+  else if(cfg.body)cfg.headers={...API_HEADERS,...cfg.headers};
+  const res=await fetch(url,cfg);
+  if(!res.ok)throw new Error('HTTP '+res.status);
+  return res.json();
+}
+
+function queuePersist(key,val){
+  if(!['rooms','classes','saved'].includes(key))return;
+  const payload=cloneDeep(val);
+  persistQueue=persistQueue.then(async()=>{
+    const res=await apiRequest('api/state.php',{method:'POST',body:JSON.stringify({key,value:payload})});
+    if(res?.ok&&res.key===key&&Array.isArray(res.items)){
+      serverState[key]=res.items;
+      if(key==='rooms'){renderHome();if(adminIn)renderRoomList();}
+      if(key==='classes'){renderHome();if(adminIn)renderClassList();}
+      if(key==='saved')renderSavedList();
+    }
+  }).catch(err=>{
+    console.error(err);
+    showToast('Kunde inte spara till servern.');
+  });
+}
+
+const DB={
+  get(k,d){
+    if(k==='theme'){
+      try{
+        const v=localStorage.getItem('plc_theme');
+        return v||d;
+      }catch{return d}
+    }
+    return Object.prototype.hasOwnProperty.call(serverState,k)?cloneDeep(serverState[k]):d;
+  },
+  set(k,v){
+    if(k==='theme'){
+      try{localStorage.setItem('plc_theme',String(v))}catch{}
+      return;
+    }
+    serverState[k]=cloneDeep(v);
+    queuePersist(k,serverState[k]);
+  }
+};
 const getRooms=()=>DB.get('rooms',[]);
 const getClasses=()=>DB.get('classes',[]);
 const setRooms=r=>DB.set('rooms',r);
@@ -40,7 +91,7 @@ function showView(n){
   if(idx>=0)document.querySelectorAll('.nav-btn')[idx].classList.add('active');
   if(n==='home')renderHome();
   if(n==='saved')renderSavedList();
-  if(n==='admin'&&adminIn)renderAdmin();
+  if(n==='admin')renderAdmin();
 }
 
 // ═══════════════ HOME ═══════════════
@@ -331,6 +382,8 @@ function confirmSavePlacement(){
   const entry={
     id:savedId||'pl_'+Date.now(),
     name,
+    roomId:room.id||null,
+    classId:cls.id||null,
     roomName:room.name,
     className:cls.name,
     savedAt:now.toISOString(),
@@ -372,10 +425,12 @@ function renderSavedList(){
     const d=new Date(p.savedAt);
     const dateStr=d.toLocaleDateString('sv-SE',{weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
     const count=p.pairs.filter(x=>x.student).length;
+    const byMeta=p.createdByName?` · skapad av ${escH(p.createdByName)}`:'';
+    const createdMeta=p.createdAt?` · ${escH(fmtMetaDate(p.createdAt))}`:'';
     return`<div class="placement-item" id="pi_${p.id}" onclick="openSavedPlacement('${p.id}')">
       <div class="pi-main">
         <div class="pi-name">${escH(p.name)}</div>
-        <div class="pi-meta">${escH(p.className)} · ${escH(p.roomName)} · ${count} elever · ${dateStr}</div>
+        <div class="pi-meta">${escH(p.className)} · ${escH(p.roomName)} · ${count} elever · ${dateStr}${byMeta}${createdMeta}</div>
       </div>
       <div class="pi-actions">
         <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();openSavedPlacement('${p.id}')">Öppna</button>
@@ -407,8 +462,8 @@ function openSavedPlacement(id){
   };
   // Flag that this came from a saved placement — we keep the class/room ids
   // for re-shuffle if available
-  const cls=getClasses().find(c=>c.name===entry.className);
-  const room=getRooms().find(r=>r.name===entry.roomName);
+  const cls=(entry.classId?getClasses().find(c=>c.id===entry.classId):null)||getClasses().find(c=>c.name===entry.className);
+  const room=(entry.roomId?getRooms().find(r=>r.id===entry.roomId):null)||getRooms().find(r=>r.name===entry.roomName);
   if(cls)shuffleResult.cls={...shuffleResult.cls,...cls};
   if(room)shuffleResult.room={...shuffleResult.room,...room};
 
@@ -442,34 +497,127 @@ function confetti(){
 }
 
 // ═══════════════ ADMIN ═══════════════
-function checkPw(){
-  if(document.getElementById('admin-pw-input').value===DB.get('pw','admin123')){
-    adminIn=true;
-    document.getElementById('admin-pw-input').value='';
-    document.getElementById('pw-err').style.display='none';
-    document.getElementById('admin-login-screen').style.display='none';
-    document.getElementById('admin-panel').style.display='block';
-    renderAdmin();
-  }else document.getElementById('pw-err').style.display='block';
-}
+let adminUsersCache=[];
+let teacherDirectory=[];
+function checkPw(){renderAdmin()}
 function adminLogout(){
-  adminIn=false;
-  document.getElementById('admin-login-screen').style.display='block';
-  document.getElementById('admin-panel').style.display='none';
+  window.location.href='logout.php';
 }
 function aTab(t){
   const tabs=['rooms','classes','settings'];
   document.querySelectorAll('.atab').forEach((b,i)=>b.classList.toggle('active',tabs[i]===t));
   document.querySelectorAll('.asec').forEach(s=>s.classList.remove('active'));
   document.getElementById('asec-'+t).classList.add('active');
+  if(t==='settings'&&isSiteAdmin)renderUserRequests();
 }
-function renderAdmin(){renderRoomList();renderClassList()}
+function renderAdmin(){
+  const login=document.getElementById('admin-login-screen');
+  const panel=document.getElementById('admin-panel');
+  if(!isSiteAdmin){
+    adminIn=false;
+    login.style.display='block';
+    panel.style.display='none';
+    loadTeacherDirectory().then(()=>{
+      const rows=teacherDirectory.map(u=>`<div class="list-item"><div><div class="li-name">${escH(u.fullName)}</div><div class="li-sub">${escH(u.email)} · @${escH(u.username)} · ${escH(u.role)}</div></div></div>`).join('');
+      login.innerHTML=`<div class="section-title">Lärarkatalog</div>
+      <p class="muted mt2 mb2" style="font-size:.82rem">Kontaktuppgifter till godkända användare.</p>
+      <div style="text-align:left">${rows||'<p class="muted">Inga användare hittades.</p>'}</div>`;
+    });
+    return;
+  }
+  adminIn=true;
+  login.style.display='none';
+  panel.style.display='block';
+  renderRoomList();
+  renderClassList();
+  loadAdminUsers().then(renderUserRequests);
+}
+
+function fmtMetaDate(s){
+  if(!s)return'';
+  const d=new Date(s);
+  if(Number.isNaN(d.getTime()))return'';
+  return d.toLocaleDateString('sv-SE',{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+
+async function loadAdminUsers(){
+  if(!isSiteAdmin)return;
+  try{
+    const data=await apiRequest('api/admin_users.php');
+    adminUsersCache=Array.isArray(data?.users)?data.users:[];
+  }catch(e){
+    console.error(e);
+    showToast('Kunde inte hämta användaransökningar.');
+  }
+}
+
+async function loadTeacherDirectory(){
+  try{
+    const data=await apiRequest('api/users.php');
+    teacherDirectory=Array.isArray(data?.users)?data.users:[];
+  }catch(e){
+    console.error(e);
+    teacherDirectory=[];
+  }
+}
+
+async function adminUserAction(action,userId,role='teacher'){
+  try{
+    const data=await apiRequest('api/admin_users.php',{method:'POST',body:JSON.stringify({action,userId,role})});
+    adminUsersCache=Array.isArray(data?.users)?data.users:[];
+    renderUserRequests();
+  }catch(e){
+    console.error(e);
+    showToast('Kunde inte uppdatera användare.');
+  }
+}
+
+function renderUserRequests(){
+  const host=document.getElementById('pending-users-list');
+  if(!host)return;
+  if(!isSiteAdmin){
+    host.innerHTML='<p class="muted">Ingen behörighet.</p>';
+    return;
+  }
+  if(!adminUsersCache.length){
+    host.innerHTML='<p class="muted">Inga användare att visa.</p>';
+    return;
+  }
+  host.innerHTML=adminUsersCache.map(u=>{
+    const created=fmtMetaDate(u.createdAt);
+    const approved=fmtMetaDate(u.approvedAt);
+    const self=(u.id===Number(currentUser?.id));
+    const meta=[
+      u.email,
+      created?`Ansökt ${created}`:'',
+      approved?`Godkänd ${approved}${u.approvedByName?` av ${u.approvedByName}`:''}`:''
+    ].filter(Boolean).join(' · ');
+    let actions='';
+    if(u.status==='pending'){
+      actions=`<button class="btn btn-primary btn-sm" onclick="adminUserAction('approve',${u.id},'teacher')">Godkänn</button>
+      <button class="btn btn-danger btn-sm" onclick="adminUserAction('reject',${u.id})">Avslå</button>`;
+    }else if(u.status==='approved'&&!self){
+      actions=`<button class="btn btn-danger btn-sm" onclick="adminUserAction('disable',${u.id})">Inaktivera</button>`;
+    }else if(u.status==='disabled'){
+      actions=`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('enable',${u.id})">Aktivera</button>`;
+    }else{
+      actions='<span class="hint" style="margin:0">-</span>';
+    }
+    return`<div class="list-item">
+      <div>
+        <div class="li-name">${escH(u.fullName)} <span class="hint" style="margin:0">(@${escH(u.username)})</span></div>
+        <div class="li-sub">${escH(meta)} · Status: ${escH(u.status)} · Roll: ${escH(u.role)}</div>
+      </div>
+      <div class="flex gap2">${actions}</div>
+    </div>`;
+  }).join('');
+}
 
 function renderRoomList(){
   const rooms=getRooms(),el=document.getElementById('room-list');
   if(!rooms.length){el.innerHTML=`<div class="empty"><div class="ico">🏫</div><p>Inga salar</p></div>`;return}
   el.innerHTML=rooms.map(r=>`<div class="list-item">
-    <div><div class="li-name">${escH(r.name)}</div><div class="li-sub">${r.desks.filter(d=>!d.inPool).length} bänkar placerade</div></div>
+    <div><div class="li-name">${escH(r.name)}</div><div class="li-sub">${r.desks.filter(d=>!d.inPool).length} bänkar placerade${r.createdByName?` · skapad av ${escH(r.createdByName)}`:''}${r.createdAt?` · ${escH(fmtMetaDate(r.createdAt))}`:''}</div></div>
     <div class="flex gap2">
       <button class="btn btn-secondary btn-sm" onclick="openEditor('${r.id}')">Redigera</button>
       <button class="btn btn-danger btn-sm" onclick="deleteRoom('${r.id}')">✕</button>
@@ -486,7 +634,7 @@ function renderClassList(){
   const classes=getClasses(),el=document.getElementById('class-list');
   if(!classes.length){el.innerHTML=`<div class="empty"><div class="ico">👥</div><p>Inga klasser</p></div>`;return}
   el.innerHTML=classes.map(c=>`<div class="list-item">
-    <div><div class="li-name">${escH(c.name)}</div><div class="li-sub">${c.students.length} elever</div></div>
+    <div><div class="li-name">${escH(c.name)}</div><div class="li-sub">${c.students.length} elever${c.createdByName?` · skapad av ${escH(c.createdByName)}`:''}${c.createdAt?` · ${escH(fmtMetaDate(c.createdAt))}`:''}</div></div>
     <div class="flex gap2">
       <button class="btn btn-secondary btn-sm" onclick="openClassModal('${c.id}')">Redigera</button>
       <button class="btn btn-danger btn-sm" onclick="deleteClass('${c.id}')">✕</button>
@@ -515,20 +663,8 @@ function deleteClass(id){
   setClasses(getClasses().filter(c=>c.id!==id));
   if(selClass===id)selClass=null;renderClassList();
 }
-function changePw(){
-  const np=document.getElementById('new-pw').value,cp=document.getElementById('conf-pw').value;
-  const m=document.getElementById('pw-msg');m.style.display='block';
-  if(np.length<4){m.style.color='#f08080';m.textContent='Minst 4 tecken';return}
-  if(np!==cp){m.style.color='#f08080';m.textContent='Matchar inte';return}
-  DB.set('pw',np);m.style.color='var(--accent)';m.textContent='✓ Sparat!';
-  document.getElementById('new-pw').value='';document.getElementById('conf-pw').value='';
-}
-function resetAll(){
-  if(!confirm('Är du säker? Allt raderas.'))return;
-  ['pw','rooms','classes','saved'].forEach(k=>localStorage.removeItem('kp3_'+k));
-  DB.set('pw','admin123');DB.set('rooms',[]);DB.set('classes',[]);DB.set('saved',[]);
-  selClass=null;selRoom=null;adminLogout();
-}
+function changePw(){showToast('Lösenord hanteras via inloggningsdelen.')}
+function resetAll(){showToast('Global återställning är avstängd i serverläge.')}
 
 // ══════════════════════════════════════════════
 // ═══════════════ ROOM EDITOR ═══════════════
@@ -1279,6 +1415,30 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>
 });
 
 // ═══════════════ INIT ═══════════════
-const savedTheme=DB.get('theme','auto');
-setTheme(savedTheme);
-renderHome();
+async function refreshStateFromServer(){
+  const data=await apiRequest('api/state.php');
+  if(!data?.ok)throw new Error('state_load_failed');
+  serverState.rooms=Array.isArray(data.rooms)?data.rooms:[];
+  serverState.classes=Array.isArray(data.classes)?data.classes:[];
+  serverState.saved=Array.isArray(data.saved)?data.saved:[];
+  if(data.user){
+    currentUser=data.user;
+    isSiteAdmin=(currentUser?.role||'')==='admin';
+  }
+  if(isSiteAdmin)await loadAdminUsers();
+}
+
+async function initApp(){
+  const savedTheme=DB.get('theme','auto');
+  setTheme(savedTheme);
+  try{
+    await refreshStateFromServer();
+  }catch(e){
+    console.error(e);
+    alert('Kunde inte ladda data från servern. Kontrollera inloggning och databasanslutning.');
+  }
+  adminIn=isSiteAdmin;
+  renderHome();
+}
+
+initApp();
