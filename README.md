@@ -23,15 +23,23 @@ Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare
 - Admin godkänner eller avslår ansökningar.
 - Godkända användare kan logga in och använda verktyget.
 - Systemet sparar vem som skapat eller uppdaterat salar och placeringar, samt när det gjordes.
+- Elevnamn i klasser och sparade placeringar krypteras i databasen.
 
-## Konfiguration (kryptering av elevnamn)
-
-- Sätt en stark nyckel i miljövariabeln `PLC_DATA_KEY` (minst 32 tecken rekommenderas).
-- Nya och uppdaterade elevnamn i klasser och sparade placeringar krypteras i databasen.
-- För att kryptera befintlig data, kör migreringen:
-  - `C:\xampp\php\php.exe scripts\migrate_encrypt_student_data.php`
+---
 
 ## Uppdateringar
+
+### 2026-03-17 22:42
+
+- Ändring: Lärare kan nu se och använda alla godkända klasser och salar, men får endast redigera/radera sina egna (server-side och UI-skydd).
+- Ändring: Admin-vyn för lärare visar nu klass- och salhantering (användarhantering är fortsatt endast för admin).
+- Ändring: Lade till lärarstyrt urval för Placera-vyn: lärare kan kryssa i vilka klasser och salar som ska vara valbara (default är inget valt).
+- Ändring: Lade till ny endpoint för lärarurval (`api/teacher_selection.php`) samt tabell för urval i databas (`plc_teacher_placement_selection`).
+- Ändring: Lade till indikator i adminlistor som visar hur många andra användare som valt en klass/sal du äger.
+- Ändring: Förbättrade urvals-kontrollen visuellt (chip/toggle) och gjorde vald/ej vald lika breda.
+- Ändring: Lärare kan nu se sparade placeringar från andra lärare/admin när både klass och sal matchar lärarens valda urval.
+- Ändring: Delade sparade placeringar är skrivskyddade för icke-ägare; de kan öppnas men inte redigeras/raderas.
+- Ändring: Vid skrivskyddad sparad placering används “Spara som ny” (skapar kopia i stället för att skriva över originalet).
 
 ### 2026-03-17 19:03
 

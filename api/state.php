@@ -8,6 +8,33 @@ $user = plc_require_login(true);
 $db = plc_db();
 $ownerUserId = (int)$user['id'];
 
+function plc_is_entity_editable(int $actorUserId, int $entityOwnerUserId): bool
+{
+    return $actorUserId === $entityOwnerUserId;
+}
+
+function plc_public_id_exists_for_other_owner(mysqli $db, string $kind, int $ownerUserId, string $publicId): bool
+{
+    if ($publicId === '') {
+        return false;
+    }
+
+    if ($kind === 'room') {
+        $sql = 'SELECT 1 FROM plc_rooms WHERE public_id = ? AND owner_user_id <> ? LIMIT 1';
+    } elseif ($kind === 'class') {
+        $sql = 'SELECT 1 FROM plc_classes WHERE public_id = ? AND owner_user_id <> ? LIMIT 1';
+    } elseif ($kind === 'saved') {
+        $sql = 'SELECT 1 FROM plc_placements WHERE public_id = ? AND owner_user_id <> ? LIMIT 1';
+    } else {
+        return false;
+    }
+
+    $stmt = $db->prepare($sql);
+    $stmt->bind_param('si', $publicId, $ownerUserId);
+    $stmt->execute();
+    return (bool)$stmt->get_result()->fetch_assoc();
+}
+
 function plc_safe_public_id(mixed $id, string $prefix): string
 {
     $val = is_string($id) ? trim($id) : '';
@@ -26,24 +53,116 @@ function plc_decode_json_array(?string $raw): array
     return is_array($val) ? $val : [];
 }
 
-function plc_fetch_rooms(mysqli $db, int $ownerUserId): array
+function plc_teacher_selection_table_exists(mysqli $db): bool
+{
+    static $cached = null;
+    if (is_bool($cached)) {
+        return $cached;
+    }
+    try {
+        $res = $db->query("SHOW TABLES LIKE 'plc_teacher_placement_selection'");
+        $cached = $res instanceof mysqli_result && $res->num_rows > 0;
+    } catch (Throwable $e) {
+        $cached = false;
+    }
+    return $cached;
+}
+
+function plc_normalize_public_id_list(array $raw): array
+{
+    $out = [];
+    $seen = [];
+    foreach ($raw as $entry) {
+        if (!is_scalar($entry)) {
+            continue;
+        }
+        $id = trim((string)$entry);
+        if ($id === '' || isset($seen[$id])) {
+            continue;
+        }
+        if (!preg_match('/^[A-Za-z0-9._-]{4,64}$/', $id)) {
+            continue;
+        }
+        $seen[$id] = true;
+        $out[] = $id;
+    }
+    return $out;
+}
+
+function plc_fetch_external_usage_counts(mysqli $db, int $actorUserId): array
+{
+    $counts = ['room' => [], 'class' => []];
+    if (!plc_teacher_selection_table_exists($db)) {
+        return $counts;
+    }
+
+    $res = $db->query('SELECT user_id, room_ids_json, class_ids_json FROM plc_teacher_placement_selection');
+    while ($row = $res->fetch_assoc()) {
+        $selectionUserId = (int)$row['user_id'];
+        if ($selectionUserId === $actorUserId) {
+            continue;
+        }
+        $roomIds = plc_normalize_public_id_list(plc_decode_json_array($row['room_ids_json']));
+        foreach ($roomIds as $publicId) {
+            $counts['room'][$publicId] = (int)($counts['room'][$publicId] ?? 0) + 1;
+        }
+        $classIds = plc_normalize_public_id_list(plc_decode_json_array($row['class_ids_json']));
+        foreach ($classIds as $publicId) {
+            $counts['class'][$publicId] = (int)($counts['class'][$publicId] ?? 0) + 1;
+        }
+    }
+
+    return $counts;
+}
+
+function plc_fetch_teacher_selected_ids_for_saved(mysqli $db, int $teacherUserId): array
+{
+    if (!plc_teacher_selection_table_exists($db)) {
+        return ['roomIds' => [], 'classIds' => []];
+    }
+
+    $stmt = $db->prepare(
+        'SELECT room_ids_json, class_ids_json
+         FROM plc_teacher_placement_selection
+         WHERE user_id = ?
+         LIMIT 1'
+    );
+    $stmt->bind_param('i', $teacherUserId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    if (!$row) {
+        return ['roomIds' => [], 'classIds' => []];
+    }
+
+    $roomIds = plc_normalize_public_id_list(plc_decode_json_array($row['room_ids_json']));
+    $classIds = plc_normalize_public_id_list(plc_decode_json_array($row['class_ids_json']));
+    return ['roomIds' => $roomIds, 'classIds' => $classIds];
+}
+
+function plc_fetch_rooms(mysqli $db, int $actorUserId, array $roomUsageById = []): array
 {
     $stmt = $db->prepare(
-        'SELECT r.public_id, r.name, r.desks_json, r.created_at, r.updated_at,
+        'SELECT r.owner_user_id, r.public_id, r.name, r.desks_json, r.created_at, r.updated_at,
+                ou.full_name AS owner_name,
                 cu.full_name AS created_by_name, uu.full_name AS updated_by_name
          FROM plc_rooms r
+         JOIN plc_users ou ON ou.id = r.owner_user_id
          JOIN plc_users cu ON cu.id = r.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = r.updated_by_user_id
-         WHERE r.owner_user_id = ?
+         WHERE ou.status = \'approved\'
          ORDER BY r.created_at DESC'
     );
-    $stmt->bind_param('i', $ownerUserId);
     $stmt->execute();
     $res = $stmt->get_result();
     $out = [];
     while ($row = $res->fetch_assoc()) {
+        $entityOwnerUserId = (int)$row['owner_user_id'];
         $out[] = [
             'id' => $row['public_id'],
+            'ownerUserId' => $entityOwnerUserId,
+            'ownerName' => $row['owner_name'],
+            'editable' => plc_is_entity_editable($actorUserId, $entityOwnerUserId),
+            'usedByOthersCount' => (int)($roomUsageById[(string)$row['public_id']] ?? 0),
             'name' => $row['name'],
             'desks' => plc_decode_json_array($row['desks_json']),
             'createdByName' => $row['created_by_name'],
@@ -55,25 +174,33 @@ function plc_fetch_rooms(mysqli $db, int $ownerUserId): array
     return $out;
 }
 
-function plc_fetch_room_by_public_id(mysqli $db, int $ownerUserId, string $publicId): ?array
+function plc_fetch_room_by_public_id(mysqli $db, int $actorUserId, int $entityOwnerUserId, string $publicId): ?array
 {
     $stmt = $db->prepare(
-        'SELECT r.public_id, r.name, r.desks_json, r.created_at, r.updated_at,
+        'SELECT r.owner_user_id, r.public_id, r.name, r.desks_json, r.created_at, r.updated_at,
+                ou.full_name AS owner_name,
                 cu.full_name AS created_by_name, uu.full_name AS updated_by_name
          FROM plc_rooms r
+         JOIN plc_users ou ON ou.id = r.owner_user_id
          JOIN plc_users cu ON cu.id = r.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = r.updated_by_user_id
          WHERE r.owner_user_id = ? AND r.public_id = ?
          LIMIT 1'
     );
-    $stmt->bind_param('is', $ownerUserId, $publicId);
+    $stmt->bind_param('is', $entityOwnerUserId, $publicId);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     if (!$row) {
         return null;
     }
+    $usageCounts = plc_fetch_external_usage_counts($db, $actorUserId);
+    $resolvedOwnerUserId = (int)$row['owner_user_id'];
     return [
         'id' => $row['public_id'],
+        'ownerUserId' => $resolvedOwnerUserId,
+        'ownerName' => $row['owner_name'],
+        'editable' => plc_is_entity_editable($actorUserId, $resolvedOwnerUserId),
+        'usedByOthersCount' => (int)($usageCounts['room'][(string)$row['public_id']] ?? 0),
         'name' => $row['name'],
         'desks' => plc_decode_json_array($row['desks_json']),
         'createdByName' => $row['created_by_name'],
@@ -83,24 +210,30 @@ function plc_fetch_room_by_public_id(mysqli $db, int $ownerUserId, string $publi
     ];
 }
 
-function plc_fetch_classes(mysqli $db, int $ownerUserId): array
+function plc_fetch_classes(mysqli $db, int $actorUserId, array $classUsageById = []): array
 {
     $stmt = $db->prepare(
-        'SELECT c.public_id, c.name, c.students_json, c.created_at, c.updated_at,
+        'SELECT c.owner_user_id, c.public_id, c.name, c.students_json, c.created_at, c.updated_at,
+                ou.full_name AS owner_name,
                 cu.full_name AS created_by_name, uu.full_name AS updated_by_name
          FROM plc_classes c
+         JOIN plc_users ou ON ou.id = c.owner_user_id
          JOIN plc_users cu ON cu.id = c.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = c.updated_by_user_id
-         WHERE c.owner_user_id = ?
+         WHERE ou.status = \'approved\'
          ORDER BY c.created_at DESC'
     );
-    $stmt->bind_param('i', $ownerUserId);
     $stmt->execute();
     $res = $stmt->get_result();
     $out = [];
     while ($row = $res->fetch_assoc()) {
+        $entityOwnerUserId = (int)$row['owner_user_id'];
         $out[] = [
             'id' => $row['public_id'],
+            'ownerUserId' => $entityOwnerUserId,
+            'ownerName' => $row['owner_name'],
+            'editable' => plc_is_entity_editable($actorUserId, $entityOwnerUserId),
+            'usedByOthersCount' => (int)($classUsageById[(string)$row['public_id']] ?? 0),
             'name' => $row['name'],
             'students' => plc_decrypt_student_list(plc_decode_json_array($row['students_json'])),
             'createdByName' => $row['created_by_name'],
@@ -112,25 +245,33 @@ function plc_fetch_classes(mysqli $db, int $ownerUserId): array
     return $out;
 }
 
-function plc_fetch_class_by_public_id(mysqli $db, int $ownerUserId, string $publicId): ?array
+function plc_fetch_class_by_public_id(mysqli $db, int $actorUserId, int $entityOwnerUserId, string $publicId): ?array
 {
     $stmt = $db->prepare(
-        'SELECT c.public_id, c.name, c.students_json, c.created_at, c.updated_at,
+        'SELECT c.owner_user_id, c.public_id, c.name, c.students_json, c.created_at, c.updated_at,
+                ou.full_name AS owner_name,
                 cu.full_name AS created_by_name, uu.full_name AS updated_by_name
          FROM plc_classes c
+         JOIN plc_users ou ON ou.id = c.owner_user_id
          JOIN plc_users cu ON cu.id = c.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = c.updated_by_user_id
          WHERE c.owner_user_id = ? AND c.public_id = ?
          LIMIT 1'
     );
-    $stmt->bind_param('is', $ownerUserId, $publicId);
+    $stmt->bind_param('is', $entityOwnerUserId, $publicId);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     if (!$row) {
         return null;
     }
+    $usageCounts = plc_fetch_external_usage_counts($db, $actorUserId);
+    $resolvedOwnerUserId = (int)$row['owner_user_id'];
     return [
         'id' => $row['public_id'],
+        'ownerUserId' => $resolvedOwnerUserId,
+        'ownerName' => $row['owner_name'],
+        'editable' => plc_is_entity_editable($actorUserId, $resolvedOwnerUserId),
+        'usedByOthersCount' => (int)($usageCounts['class'][(string)$row['public_id']] ?? 0),
         'name' => $row['name'],
         'students' => plc_decrypt_student_list(plc_decode_json_array($row['students_json'])),
         'createdByName' => $row['created_by_name'],
@@ -140,26 +281,54 @@ function plc_fetch_class_by_public_id(mysqli $db, int $ownerUserId, string $publ
     ];
 }
 
-function plc_fetch_saved(mysqli $db, int $ownerUserId): array
+function plc_fetch_saved(mysqli $db, int $actorUserId, string $actorRole): array
 {
-    $stmt = $db->prepare(
-        'SELECT p.public_id, p.name, p.room_name, p.class_name, p.room_public_id, p.class_public_id,
-                p.pairs_json, p.saved_at, p.created_at, p.updated_at,
-                cu.full_name AS created_by_name, uu.full_name AS updated_by_name
-         FROM plc_placements p
-         JOIN plc_users cu ON cu.id = p.created_by_user_id
-         LEFT JOIN plc_users uu ON uu.id = p.updated_by_user_id
-         WHERE p.owner_user_id = ?
-         ORDER BY COALESCE(p.saved_at, p.created_at) DESC'
-    );
-    $stmt->bind_param('i', $ownerUserId);
-    $stmt->execute();
-    $res = $stmt->get_result();
+    $actorUserIdSql = (string)(int)$actorUserId;
+    $whereParts = ["p.owner_user_id = {$actorUserIdSql}"];
+
+    if ($actorRole === 'teacher') {
+        $selection = plc_fetch_teacher_selected_ids_for_saved($db, $actorUserId);
+        if ($selection['roomIds'] && $selection['classIds']) {
+            $roomQuoted = [];
+            foreach ($selection['roomIds'] as $roomId) {
+                $roomQuoted[] = "'" . $db->real_escape_string($roomId) . "'";
+            }
+            $classQuoted = [];
+            foreach ($selection['classIds'] as $classId) {
+                $classQuoted[] = "'" . $db->real_escape_string($classId) . "'";
+            }
+            if ($roomQuoted && $classQuoted) {
+                $roomIn = implode(',', $roomQuoted);
+                $classIn = implode(',', $classQuoted);
+                $whereParts[] = "(p.owner_user_id <> {$actorUserIdSql}
+                    AND p.room_public_id IS NOT NULL AND p.room_public_id <> ''
+                    AND p.class_public_id IS NOT NULL AND p.class_public_id <> ''
+                    AND p.room_public_id IN ({$roomIn})
+                    AND p.class_public_id IN ({$classIn}))";
+            }
+        }
+    }
+
+    $whereSql = implode(' OR ', $whereParts);
+    $sql = "SELECT p.owner_user_id, p.public_id, p.name, p.room_name, p.class_name, p.room_public_id, p.class_public_id,
+                   p.pairs_json, p.saved_at, p.created_at, p.updated_at,
+                   ou.full_name AS owner_name, cu.full_name AS created_by_name, uu.full_name AS updated_by_name
+            FROM plc_placements p
+            JOIN plc_users ou ON ou.id = p.owner_user_id
+            JOIN plc_users cu ON cu.id = p.created_by_user_id
+            LEFT JOIN plc_users uu ON uu.id = p.updated_by_user_id
+            WHERE ou.status = 'approved' AND ({$whereSql})
+            ORDER BY COALESCE(p.saved_at, p.created_at) DESC";
+    $res = $db->query($sql);
     $out = [];
     while ($row = $res->fetch_assoc()) {
         $savedAt = $row['saved_at'] ?: $row['created_at'];
+        $entityOwnerUserId = (int)$row['owner_user_id'];
         $out[] = [
             'id' => $row['public_id'],
+            'ownerUserId' => $entityOwnerUserId,
+            'ownerName' => $row['owner_name'],
+            'editable' => plc_is_entity_editable($actorUserId, $entityOwnerUserId),
             'name' => $row['name'],
             'roomName' => $row['room_name'],
             'className' => $row['class_name'],
@@ -176,27 +345,32 @@ function plc_fetch_saved(mysqli $db, int $ownerUserId): array
     return $out;
 }
 
-function plc_fetch_saved_by_public_id(mysqli $db, int $ownerUserId, string $publicId): ?array
+function plc_fetch_saved_by_public_id(mysqli $db, int $actorUserId, int $entityOwnerUserId, string $publicId): ?array
 {
     $stmt = $db->prepare(
-        'SELECT p.public_id, p.name, p.room_name, p.class_name, p.room_public_id, p.class_public_id,
+        'SELECT p.owner_user_id, p.public_id, p.name, p.room_name, p.class_name, p.room_public_id, p.class_public_id,
                 p.pairs_json, p.saved_at, p.created_at, p.updated_at,
-                cu.full_name AS created_by_name, uu.full_name AS updated_by_name
+                ou.full_name AS owner_name, cu.full_name AS created_by_name, uu.full_name AS updated_by_name
          FROM plc_placements p
+         JOIN plc_users ou ON ou.id = p.owner_user_id
          JOIN plc_users cu ON cu.id = p.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = p.updated_by_user_id
          WHERE p.owner_user_id = ? AND p.public_id = ?
          LIMIT 1'
     );
-    $stmt->bind_param('is', $ownerUserId, $publicId);
+    $stmt->bind_param('is', $entityOwnerUserId, $publicId);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     if (!$row) {
         return null;
     }
     $savedAt = $row['saved_at'] ?: $row['created_at'];
+    $resolvedOwnerUserId = (int)$row['owner_user_id'];
     return [
         'id' => $row['public_id'],
+        'ownerUserId' => $resolvedOwnerUserId,
+        'ownerName' => $row['owner_name'],
+        'editable' => plc_is_entity_editable($actorUserId, $resolvedOwnerUserId),
         'name' => $row['name'],
         'roomName' => $row['room_name'],
         'className' => $row['class_name'],
@@ -211,13 +385,14 @@ function plc_fetch_saved_by_public_id(mysqli $db, int $ownerUserId, string $publ
     ];
 }
 
-function plc_upsert_room(mysqli $db, int $ownerUserId, int $actorUserId, array $item): ?array
+function plc_upsert_room(mysqli $db, int $actorUserId, array $item): ?array
 {
     $name = trim((string)($item['name'] ?? ''));
     if ($name === '') {
         return null;
     }
-    $publicId = plc_safe_public_id($item['id'] ?? null, 'room');
+    $rawPublicId = is_string($item['id'] ?? null) ? trim((string)$item['id']) : '';
+    $publicId = plc_safe_public_id($rawPublicId !== '' ? $rawPublicId : null, 'room');
     $desks = $item['desks'] ?? [];
     if (!is_array($desks)) {
         $desks = [];
@@ -228,7 +403,7 @@ function plc_upsert_room(mysqli $db, int $ownerUserId, int $actorUserId, array $
     }
 
     $stmt = $db->prepare('SELECT id FROM plc_rooms WHERE owner_user_id = ? AND public_id = ? LIMIT 1');
-    $stmt->bind_param('is', $ownerUserId, $publicId);
+    $stmt->bind_param('is', $actorUserId, $publicId);
     $stmt->execute();
     $exists = $stmt->get_result()->fetch_assoc();
 
@@ -238,35 +413,50 @@ function plc_upsert_room(mysqli $db, int $ownerUserId, int $actorUserId, array $
              SET name = ?, desks_json = ?, updated_by_user_id = ?, updated_at = NOW()
              WHERE owner_user_id = ? AND public_id = ?'
         );
-        $stmt->bind_param('ssiis', $name, $desksJson, $actorUserId, $ownerUserId, $publicId);
+        $stmt->bind_param('ssiis', $name, $desksJson, $actorUserId, $actorUserId, $publicId);
         $stmt->execute();
     } else {
+        if (
+            $rawPublicId !== '' &&
+            plc_public_id_exists_for_other_owner($db, 'room', $actorUserId, $publicId)
+        ) {
+            throw new RuntimeException('forbidden');
+        }
         $stmt = $db->prepare(
             'INSERT INTO plc_rooms (public_id, owner_user_id, name, desks_json, created_by_user_id, updated_by_user_id)
              VALUES (?, ?, ?, ?, ?, NULL)'
         );
-        $stmt->bind_param('sissi', $publicId, $ownerUserId, $name, $desksJson, $actorUserId);
+        $stmt->bind_param('sissi', $publicId, $actorUserId, $name, $desksJson, $actorUserId);
         $stmt->execute();
     }
 
-    return plc_fetch_room_by_public_id($db, $ownerUserId, $publicId);
+    return plc_fetch_room_by_public_id($db, $actorUserId, $actorUserId, $publicId);
 }
 
-function plc_delete_room(mysqli $db, int $ownerUserId, string $publicId): string
+function plc_delete_room(mysqli $db, int $actorUserId, string $publicId): string
 {
+    $stmt = $db->prepare('SELECT id FROM plc_rooms WHERE owner_user_id = ? AND public_id = ? LIMIT 1');
+    $stmt->bind_param('is', $actorUserId, $publicId);
+    $stmt->execute();
+    $ownsEntity = (bool)$stmt->get_result()->fetch_assoc();
+    if (!$ownsEntity && plc_public_id_exists_for_other_owner($db, 'room', $actorUserId, $publicId)) {
+        throw new RuntimeException('forbidden');
+    }
+
     $stmt = $db->prepare('DELETE FROM plc_rooms WHERE owner_user_id = ? AND public_id = ?');
-    $stmt->bind_param('is', $ownerUserId, $publicId);
+    $stmt->bind_param('is', $actorUserId, $publicId);
     $stmt->execute();
     return $publicId;
 }
 
-function plc_upsert_class(mysqli $db, int $ownerUserId, int $actorUserId, array $item): ?array
+function plc_upsert_class(mysqli $db, int $actorUserId, array $item): ?array
 {
     $name = trim((string)($item['name'] ?? ''));
     if ($name === '') {
         return null;
     }
-    $publicId = plc_safe_public_id($item['id'] ?? null, 'cls');
+    $rawPublicId = is_string($item['id'] ?? null) ? trim((string)$item['id']) : '';
+    $publicId = plc_safe_public_id($rawPublicId !== '' ? $rawPublicId : null, 'cls');
     $students = $item['students'] ?? [];
     if (!is_array($students)) {
         $students = [];
@@ -278,7 +468,7 @@ function plc_upsert_class(mysqli $db, int $ownerUserId, int $actorUserId, array 
     }
 
     $stmt = $db->prepare('SELECT id FROM plc_classes WHERE owner_user_id = ? AND public_id = ? LIMIT 1');
-    $stmt->bind_param('is', $ownerUserId, $publicId);
+    $stmt->bind_param('is', $actorUserId, $publicId);
     $stmt->execute();
     $exists = $stmt->get_result()->fetch_assoc();
 
@@ -288,24 +478,38 @@ function plc_upsert_class(mysqli $db, int $ownerUserId, int $actorUserId, array 
              SET name = ?, students_json = ?, updated_by_user_id = ?, updated_at = NOW()
              WHERE owner_user_id = ? AND public_id = ?'
         );
-        $stmt->bind_param('ssiis', $name, $studentsJson, $actorUserId, $ownerUserId, $publicId);
+        $stmt->bind_param('ssiis', $name, $studentsJson, $actorUserId, $actorUserId, $publicId);
         $stmt->execute();
     } else {
+        if (
+            $rawPublicId !== '' &&
+            plc_public_id_exists_for_other_owner($db, 'class', $actorUserId, $publicId)
+        ) {
+            throw new RuntimeException('forbidden');
+        }
         $stmt = $db->prepare(
             'INSERT INTO plc_classes (public_id, owner_user_id, name, students_json, created_by_user_id, updated_by_user_id)
              VALUES (?, ?, ?, ?, ?, NULL)'
         );
-        $stmt->bind_param('sissi', $publicId, $ownerUserId, $name, $studentsJson, $actorUserId);
+        $stmt->bind_param('sissi', $publicId, $actorUserId, $name, $studentsJson, $actorUserId);
         $stmt->execute();
     }
 
-    return plc_fetch_class_by_public_id($db, $ownerUserId, $publicId);
+    return plc_fetch_class_by_public_id($db, $actorUserId, $actorUserId, $publicId);
 }
 
-function plc_delete_class(mysqli $db, int $ownerUserId, string $publicId): string
+function plc_delete_class(mysqli $db, int $actorUserId, string $publicId): string
 {
+    $stmt = $db->prepare('SELECT id FROM plc_classes WHERE owner_user_id = ? AND public_id = ? LIMIT 1');
+    $stmt->bind_param('is', $actorUserId, $publicId);
+    $stmt->execute();
+    $ownsEntity = (bool)$stmt->get_result()->fetch_assoc();
+    if (!$ownsEntity && plc_public_id_exists_for_other_owner($db, 'class', $actorUserId, $publicId)) {
+        throw new RuntimeException('forbidden');
+    }
+
     $stmt = $db->prepare('DELETE FROM plc_classes WHERE owner_user_id = ? AND public_id = ?');
-    $stmt->bind_param('is', $ownerUserId, $publicId);
+    $stmt->bind_param('is', $actorUserId, $publicId);
     $stmt->execute();
     return $publicId;
 }
@@ -316,7 +520,8 @@ function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, array 
     if ($name === '') {
         return null;
     }
-    $publicId = plc_safe_public_id($item['id'] ?? null, 'pl');
+    $rawPublicId = is_string($item['id'] ?? null) ? trim((string)$item['id']) : '';
+    $publicId = plc_safe_public_id($rawPublicId !== '' ? $rawPublicId : null, 'pl');
     $roomName = trim((string)($item['roomName'] ?? ''));
     $className = trim((string)($item['className'] ?? ''));
     $roomPublicId = trim((string)($item['roomId'] ?? ''));
@@ -361,6 +566,12 @@ function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, array 
         );
         $stmt->execute();
     } else {
+        if (
+            $rawPublicId !== '' &&
+            plc_public_id_exists_for_other_owner($db, 'saved', $ownerUserId, $publicId)
+        ) {
+            throw new RuntimeException('forbidden');
+        }
         $stmt = $db->prepare(
             'INSERT INTO plc_placements (
                 public_id, owner_user_id, name, room_name, class_name, room_public_id, class_public_id,
@@ -383,11 +594,19 @@ function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, array 
         $stmt->execute();
     }
 
-    return plc_fetch_saved_by_public_id($db, $ownerUserId, $publicId);
+    return plc_fetch_saved_by_public_id($db, $actorUserId, $ownerUserId, $publicId);
 }
 
 function plc_delete_saved(mysqli $db, int $ownerUserId, string $publicId): string
 {
+    $stmt = $db->prepare('SELECT id FROM plc_placements WHERE owner_user_id = ? AND public_id = ? LIMIT 1');
+    $stmt->bind_param('is', $ownerUserId, $publicId);
+    $stmt->execute();
+    $ownsEntity = (bool)$stmt->get_result()->fetch_assoc();
+    if (!$ownsEntity && plc_public_id_exists_for_other_owner($db, 'saved', $ownerUserId, $publicId)) {
+        throw new RuntimeException('forbidden');
+    }
+
     $stmt = $db->prepare('DELETE FROM plc_placements WHERE owner_user_id = ? AND public_id = ?');
     $stmt->bind_param('is', $ownerUserId, $publicId);
     $stmt->execute();
@@ -421,6 +640,10 @@ function plc_sync_rooms(mysqli $db, int $ownerUserId, int $actorUserId, array $i
         if (!is_array($item)) {
             continue;
         }
+        $itemOwnerUserId = (int)($item['ownerUserId'] ?? $ownerUserId);
+        if ($itemOwnerUserId !== $ownerUserId) {
+            continue;
+        }
         $name = trim((string)($item['name'] ?? ''));
         if ($name === '') {
             continue;
@@ -433,6 +656,9 @@ function plc_sync_rooms(mysqli $db, int $ownerUserId, int $actorUserId, array $i
         $desksJson = json_encode($desks, JSON_UNESCAPED_UNICODE);
         if ($desksJson === false) {
             $desksJson = '[]';
+        }
+        if (!isset($existing[$publicId]) && plc_public_id_exists_for_other_owner($db, 'room', $ownerUserId, $publicId)) {
+            continue;
         }
         $seen[$publicId] = true;
 
@@ -452,7 +678,8 @@ function plc_sync_rooms(mysqli $db, int $ownerUserId, int $actorUserId, array $i
         }
     }
 
-    return plc_fetch_rooms($db, $ownerUserId);
+    $usageCounts = plc_fetch_external_usage_counts($db, $ownerUserId);
+    return plc_fetch_rooms($db, $ownerUserId, $usageCounts['room']);
 }
 
 function plc_sync_classes(mysqli $db, int $ownerUserId, int $actorUserId, array $items): array
@@ -482,6 +709,10 @@ function plc_sync_classes(mysqli $db, int $ownerUserId, int $actorUserId, array 
         if (!is_array($item)) {
             continue;
         }
+        $itemOwnerUserId = (int)($item['ownerUserId'] ?? $ownerUserId);
+        if ($itemOwnerUserId !== $ownerUserId) {
+            continue;
+        }
         $name = trim((string)($item['name'] ?? ''));
         if ($name === '') {
             continue;
@@ -495,6 +726,9 @@ function plc_sync_classes(mysqli $db, int $ownerUserId, int $actorUserId, array 
         $studentsJson = json_encode($students, JSON_UNESCAPED_UNICODE);
         if ($studentsJson === false) {
             $studentsJson = '[]';
+        }
+        if (!isset($existing[$publicId]) && plc_public_id_exists_for_other_owner($db, 'class', $ownerUserId, $publicId)) {
+            continue;
         }
         $seen[$publicId] = true;
 
@@ -514,10 +748,11 @@ function plc_sync_classes(mysqli $db, int $ownerUserId, int $actorUserId, array 
         }
     }
 
-    return plc_fetch_classes($db, $ownerUserId);
+    $usageCounts = plc_fetch_external_usage_counts($db, $ownerUserId);
+    return plc_fetch_classes($db, $ownerUserId, $usageCounts['class']);
 }
 
-function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, array $items): array
+function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, string $actorRole, array $items): array
 {
     $existing = [];
     $stmt = $db->prepare('SELECT public_id FROM plc_placements WHERE owner_user_id = ?');
@@ -547,6 +782,10 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, array $i
         if (!is_array($item)) {
             continue;
         }
+        $itemOwnerUserId = (int)($item['ownerUserId'] ?? $ownerUserId);
+        if ($itemOwnerUserId !== $ownerUserId) {
+            continue;
+        }
         $name = trim((string)($item['name'] ?? ''));
         if ($name === '') {
             continue;
@@ -567,6 +806,9 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, array $i
         $pairsJson = json_encode($pairs, JSON_UNESCAPED_UNICODE);
         if ($pairsJson === false) {
             $pairsJson = '[]';
+        }
+        if (!isset($existing[$publicId]) && plc_public_id_exists_for_other_owner($db, 'saved', $ownerUserId, $publicId)) {
+            continue;
         }
         $seen[$publicId] = true;
 
@@ -610,11 +852,13 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, array $i
         }
     }
 
-    return plc_fetch_saved($db, $ownerUserId);
+    return plc_fetch_saved($db, $ownerUserId, $actorRole);
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     try {
+        $usageCounts = plc_fetch_external_usage_counts($db, $ownerUserId);
+        $actorRole = (string)($user['role'] ?? 'teacher');
         $payload = [
             'ok' => true,
             'user' => [
@@ -624,9 +868,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 'email' => $user['email'],
                 'role' => $user['role'],
             ],
-            'rooms' => plc_fetch_rooms($db, $ownerUserId),
-            'classes' => plc_fetch_classes($db, $ownerUserId),
-            'saved' => plc_fetch_saved($db, $ownerUserId),
+            'rooms' => plc_fetch_rooms($db, $ownerUserId, $usageCounts['room']),
+            'classes' => plc_fetch_classes($db, $ownerUserId, $usageCounts['class']),
+            'saved' => plc_fetch_saved($db, $ownerUserId, $actorRole),
         ];
         plc_json($payload);
     } catch (Throwable $e) {
@@ -642,6 +886,7 @@ plc_verify_csrf_or_403();
 $body = plc_read_json_body();
 $key = (string)($body['key'] ?? '');
 $action = (string)($body['action'] ?? 'replace');
+$actorRole = (string)($user['role'] ?? 'teacher');
 $value = $body['value'] ?? [];
 if (!is_array($value)) {
     $value = [];
@@ -656,7 +901,7 @@ try {
         } elseif ($key === 'classes') {
             $items = plc_sync_classes($db, $ownerUserId, $ownerUserId, $value);
         } elseif ($key === 'saved') {
-            $items = plc_sync_saved($db, $ownerUserId, $ownerUserId, $value);
+            $items = plc_sync_saved($db, $ownerUserId, $ownerUserId, $actorRole, $value);
         } else {
             plc_json(['ok' => false, 'error' => 'invalid_key'], 400);
         }
@@ -665,9 +910,9 @@ try {
             plc_json(['ok' => false, 'error' => 'invalid_item'], 400);
         }
         if ($key === 'rooms') {
-            $updatedItem = plc_upsert_room($db, $ownerUserId, $ownerUserId, $item);
+            $updatedItem = plc_upsert_room($db, $ownerUserId, $item);
         } elseif ($key === 'classes') {
-            $updatedItem = plc_upsert_class($db, $ownerUserId, $ownerUserId, $item);
+            $updatedItem = plc_upsert_class($db, $ownerUserId, $item);
         } elseif ($key === 'saved') {
             $updatedItem = plc_upsert_saved($db, $ownerUserId, $ownerUserId, $item);
         } else {
@@ -692,6 +937,15 @@ try {
     } else {
         plc_json(['ok' => false, 'error' => 'invalid_action'], 400);
     }
+} catch (RuntimeException $e) {
+    if ($e->getMessage() === 'forbidden') {
+        plc_json([
+            'ok' => false,
+            'error' => 'forbidden',
+            'message' => 'Du kan bara ändra dina egna klasser, salar och placeringar.',
+        ], 403);
+    }
+    plc_json(['ok' => false, 'error' => 'save_failed'], 500);
 } catch (Throwable $e) {
     plc_json(['ok' => false, 'error' => 'save_failed'], 500);
 }

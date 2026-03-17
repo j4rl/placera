@@ -264,6 +264,44 @@ main {
   margin-bottom: 14px
 }
 
+.about-wrap {
+  max-width: 860px;
+  margin: 0 auto
+}
+
+.about-copy h2 {
+  font-family: var(--fh);
+  font-size: 1.4rem;
+  font-weight: 800;
+  margin-bottom: 10px
+}
+
+.about-copy h3 {
+  font-family: var(--fh);
+  font-size: .96rem;
+  font-weight: 700;
+  margin: 18px 0 8px 0;
+  color: var(--accent2)
+}
+
+.about-copy p {
+  font-size: .86rem;
+  color: var(--text);
+  line-height: 1.6
+}
+
+.about-copy ul {
+  margin-left: 18px;
+  display: grid;
+  gap: 7px
+}
+
+.about-copy li {
+  font-size: .82rem;
+  color: var(--text);
+  line-height: 1.5
+}
+
 .section-title {
   font-family: var(--fh);
   font-size: 1.9rem;
@@ -964,6 +1002,81 @@ hr {
 .editor-check input {
   width: auto;
   margin: 0
+}
+
+.admin-pick-note {
+  margin: 0 0 10px 0
+}
+
+.admin-pick-check {
+  position: relative;
+  display: inline-flex;
+  margin: 0 4px 0 0;
+  cursor: pointer
+}
+
+.admin-pick-check-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none
+}
+
+.admin-pick-check-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  min-width: 156px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: .72rem;
+  line-height: 1;
+  white-space: nowrap;
+  transition: border-color .15s, background .15s, color .15s, transform .12s
+}
+
+.admin-pick-check-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface3);
+  color: transparent;
+  display: inline-grid;
+  place-items: center;
+  font-size: .58rem;
+  font-weight: 800;
+  line-height: 1;
+  transition: border-color .15s, background .15s, color .15s
+}
+
+.admin-pick-check:hover .admin-pick-check-pill {
+  border-color: var(--accent2);
+  color: var(--text)
+}
+
+.admin-pick-check-input:focus-visible+.admin-pick-check-pill {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px
+}
+
+.admin-pick-check-input:checked+.admin-pick-check-pill {
+  border-color: var(--accent2);
+  background: rgba(200, 240, 96, .14);
+  color: var(--text)
+}
+
+.admin-pick-check-input:checked+.admin-pick-check-pill .admin-pick-check-icon {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #111
+}
+
+.admin-pick-check:active .admin-pick-check-pill {
+  transform: translateY(1px)
 }
 
 .editor-toolbar-hint {

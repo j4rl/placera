@@ -31,6 +31,7 @@ $boot = [
     <button type="button" class="nav-btn active" onclick="showView('home')">Placera</button>
     <button type="button" class="nav-btn" onclick="showView('saved')">Placeringar</button>
     <button type="button" class="nav-btn" onclick="showView('admin')">Admin</button>
+    <button type="button" class="nav-btn" onclick="showView('about')">Om</button>
   </nav>
   <div class="header-right">
     <div class="user-pill" id="user-pill">
@@ -79,7 +80,7 @@ $boot = [
     </div>
     <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
       <button type="button" class="btn btn-secondary btn-sm" id="res-reshuffle-btn" onclick="doShuffle(true)">↺ Slumpa om</button>
-      <button type="button" class="btn btn-primary btn-sm" onclick="openSaveModal()">💾 Spara placering</button>
+      <button type="button" class="btn btn-primary btn-sm" id="save-placement-btn" onclick="openSaveModal()">💾 Spara placering</button>
       <button type="button" class="btn btn-secondary btn-sm" id="print-btn" onclick="printDirect()">🖨 Skriv ut direkt</button>
       <button type="button" class="btn btn-secondary btn-sm" id="pdf-btn" onclick="exportPDF()">📄 Ladda ner PDF</button>
     </div>
@@ -109,6 +110,53 @@ $boot = [
     </div>
   </div>
   <div id="saved-list"></div>
+</div>
+
+<!-- ABOUT -->
+<div class="view" id="about-view">
+  <div class="about-wrap">
+    <div class="section-title">Om Placera</div>
+    <div class="card about-copy">
+      <h2>Placera</h2>
+      <p>Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare att snabbt skapa, slumpa, justera, spara och skriva ut elevplaceringar i olika salar.</p>
+
+      <h3>Vem appen är till för</h3>
+      <ul>
+        <li>Lärare som behöver skapa och hantera sittplatser på ett snabbt och tydligt sätt.</li>
+        <li>Arbetslag och ämneslag som vill kunna återanvända salar och placeringar.</li>
+        <li>Skoladministratörer som vill styra vilka användare som får tillgång till systemet.</li>
+      </ul>
+
+      <h3>Vad appen gör</h3>
+      <ul>
+        <li>Hanterar klasser och elevlistor.</li>
+        <li>Hanterar salar och bänkplaceringar via visuell editor.</li>
+        <li>Slumpar placeringar automatiskt utifrån vald klass och sal.</li>
+        <li>Låter användaren finjustera placeringar manuellt.</li>
+        <li>Sparar placeringar för senare användning.</li>
+        <li>Ger möjlighet till direktutskrift och nedladdning som PDF.</li>
+      </ul>
+
+      <h3>Användar- och säkerhetsflöde</h3>
+      <ul>
+        <li>Nya användare skickar en ansökan om konto.</li>
+        <li>Admin godkänner eller avslår ansökningar.</li>
+        <li>Godkända användare kan logga in och använda verktyget.</li>
+        <li>Systemet sparar vem som skapat eller uppdaterat salar och placeringar, samt när det gjordes.</li>
+        <li>Elevnamn i klasser och sparade placeringar krypteras i databasen.</li>
+      </ul>
+      <h3>Vem ligger bakom?</h3>
+      <p>Placera är byggd av Charlie Jarl – på fritiden. <br>
+      Tycker du den är bra? Säg det högt. Dela den. Använd den.<br>
+      Den är gratis av en anledning: bra saker ska inte gömmas bakom betalväggar.<br>
+      Men – vill du visa uppskattning på riktigt, så uppskattas en donation enormt. <br>
+      Helt frivilligt. Helt upp till dig. <br>
+      Skanna PayPal-koden nedan, om du vill, och betala det du tycker det är värt.</p>
+        <div style="margin-top:16px;width:100%;display:flex;justify-content:center">
+          <img src="includes/paypal_qr.png" alt="PayPal QR-kod" style="width:150px;height:auto">
+        </div>
+    </div>
+  </div>
 </div>
 
 <!-- PROFILE -->

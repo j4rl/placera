@@ -8,6 +8,8 @@ let currentUser=APP_BOOT.user||null;
 let isSiteAdmin=(currentUser?.role||'')==='admin';
 let serverState={rooms:[],classes:[],saved:[]};
 let persistQueue=Promise.resolve();
+let teacherPlacementSelection={roomIds:[],classIds:[]};
+let teacherSelectionPersistQueue=Promise.resolve();
 const STATE_KEYS=['rooms','classes','saved'];
 const colorSchemeQuery=window.matchMedia('(prefers-color-scheme: dark)');
 const reducedMotionQuery=window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -136,6 +138,169 @@ function countPlacedDesks(room){
   return total;
 }
 
+function canEditEntity(item){
+  if(!item)return false;
+  if(typeof item.editable==='boolean')return item.editable;
+  const ownerId=Number(item.ownerUserId);
+  if(Number.isFinite(ownerId)&&ownerId>0)return ownerId===Number(currentUser?.id);
+  return true;
+}
+
+function entityOwnerText(item){
+  const ownerName=String(item?.ownerName||item?.createdByName||'').trim();
+  if(!ownerName)return '';
+  if(Number(item?.ownerUserId)===Number(currentUser?.id))return 'Min';
+  return ownerName;
+}
+
+function isForbiddenError(err){
+  return String(err?.data?.error||'')==='forbidden';
+}
+
+function usageByOthersText(item){
+  const cnt=Number(item?.usedByOthersCount||0);
+  if(!canEditEntity(item)||cnt<=0)return '';
+  return cnt===1?' · används av 1 annan':' · används av '+cnt+' andra';
+}
+
+function canEditSavedPlacement(item){
+  return canEditEntity(item);
+}
+
+function buildSavedDomKey(ownerUserId,id){
+  const own=String(Number(ownerUserId||0));
+  const safeId=String(id||'').replace(/[^A-Za-z0-9._-]/g,'_');
+  return own+'_'+safeId;
+}
+
+function isTeacherUser(){
+  return (currentUser?.role||'')==='teacher';
+}
+
+function normalizeSelectionIds(ids){
+  const out=[];
+  const seen=new Set();
+  if(!Array.isArray(ids))return out;
+  for(const raw of ids){
+    const id=String(raw||'').trim();
+    if(!id||seen.has(id))continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+function setTeacherPlacementSelection(sel,{render=true}={}){
+  teacherPlacementSelection={
+    roomIds:normalizeSelectionIds(sel?.roomIds),
+    classIds:normalizeSelectionIds(sel?.classIds)
+  };
+  if(!render)return;
+  renderHome();
+  if(adminIn){
+    renderRoomList();
+    renderClassList();
+  }
+}
+
+function getPlacementRooms(){
+  const rooms=getRooms();
+  if(!isTeacherUser())return rooms;
+  const allowed=new Set(teacherPlacementSelection.roomIds);
+  return rooms.filter(r=>allowed.has(r.id));
+}
+
+function getPlacementClasses(){
+  const classes=getClasses();
+  if(!isTeacherUser())return classes;
+  const allowed=new Set(teacherPlacementSelection.classIds);
+  return classes.filter(c=>allowed.has(c.id));
+}
+
+async function loadTeacherPlacementSelection(){
+  if(!isTeacherUser()){
+    setTeacherPlacementSelection({roomIds:[],classIds:[]},{render:false});
+    return;
+  }
+  const data=await apiRequest('api/teacher_selection.php');
+  setTeacherPlacementSelection({
+    roomIds:data?.roomIds||[],
+    classIds:data?.classIds||[]
+  },{render:false});
+}
+
+function queueTeacherSelectionSave(next){
+  const payload={
+    roomIds:normalizeSelectionIds(next?.roomIds),
+    classIds:normalizeSelectionIds(next?.classIds)
+  };
+  teacherSelectionPersistQueue=teacherSelectionPersistQueue.catch(()=>null).then(async()=>{
+    return apiRequest('api/teacher_selection.php',{method:'POST',body:JSON.stringify(payload)});
+  });
+  return teacherSelectionPersistQueue;
+}
+
+async function saveTeacherPlacementSelection(next){
+  if(!isTeacherUser())return;
+  const prev=cloneDeep(teacherPlacementSelection);
+  setTeacherPlacementSelection(next);
+  try{
+    const res=await queueTeacherSelectionSave(next);
+    setTeacherPlacementSelection({
+      roomIds:res?.roomIds||teacherPlacementSelection.roomIds,
+      classIds:res?.classIds||teacherPlacementSelection.classIds
+    });
+  }catch(e){
+    console.error(e);
+    setTeacherPlacementSelection(prev);
+    notifyError('Kunde inte spara urvalet för placering.');
+  }
+}
+
+function isTeacherRoomSelected(id){
+  return teacherPlacementSelection.roomIds.includes(String(id));
+}
+
+function isTeacherClassSelected(id){
+  return teacherPlacementSelection.classIds.includes(String(id));
+}
+
+function renderTeacherPlacementToggle(kind,id,isSelected){
+  const safeId=String(id||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  const onChangeFn=kind==='room'?'toggleTeacherRoomSelection':'toggleTeacherClassSelection';
+  const label='Använd i placering';
+  return `<label class="admin-pick-check">
+    <input class="admin-pick-check-input" type="checkbox" ${isSelected?'checked':''} onchange="${onChangeFn}('${safeId}',this.checked)">
+    <span class="admin-pick-check-pill"><span class="admin-pick-check-icon" aria-hidden="true">✓</span>${label}</span>
+  </label>`;
+}
+
+async function toggleTeacherRoomSelection(id,checked){
+  if(!isTeacherUser())return;
+  const next={
+    roomIds:[...teacherPlacementSelection.roomIds],
+    classIds:[...teacherPlacementSelection.classIds]
+  };
+  const set=new Set(next.roomIds);
+  if(checked)set.add(String(id));
+  else set.delete(String(id));
+  next.roomIds=[...set];
+  await saveTeacherPlacementSelection(next);
+}
+
+async function toggleTeacherClassSelection(id,checked){
+  if(!isTeacherUser())return;
+  const next={
+    roomIds:[...teacherPlacementSelection.roomIds],
+    classIds:[...teacherPlacementSelection.classIds]
+  };
+  const set=new Set(next.classIds);
+  if(checked)set.add(String(id));
+  else set.delete(String(id));
+  next.classIds=[...set];
+  await saveTeacherPlacementSelection(next);
+}
+
 // ═══════════════ STATE ═══════════════
 let selClass=null,selRoom=null;
 let editingRoomId=null,editingClassId=null;
@@ -163,9 +328,10 @@ function updateUserBadge(){
 
 // ═══════════════ NAV ═══════════════
 function showView(n){
+  adminIn=(n==='admin');
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
-  const views=['home','saved','admin'];
+  const views=['home','saved','about','admin'];
   document.getElementById(n+'-view').classList.add('active');
   const idx=views.indexOf(n);
   if(idx>=0)document.querySelectorAll('.nav-btn')[idx].classList.add('active');
@@ -177,16 +343,33 @@ function showView(n){
 
 // ═══════════════ HOME ═══════════════
 function renderHome(){
-  const rooms=getRooms(),classes=getClasses();
+  const allRooms=getRooms(),allClasses=getClasses();
+  const rooms=getPlacementRooms(),classes=getPlacementClasses();
   const cs=document.getElementById('class-sel');
   const rs=document.getElementById('room-sel');
+
+  if(selClass&&!classes.some(c=>c.id===selClass))selClass=null;
+  if(selRoom&&!rooms.some(r=>r.id===selRoom))selRoom=null;
+
   const selectedRoom=rooms.find(r=>r.id===selRoom)||null;
   cs.innerHTML=classes.length
-    ?classes.map(c=>`<button type="button" class="pick-btn ${selClass===c.id?'sel':''}" aria-pressed="${selClass===c.id?'true':'false'}" onclick="pickC('${c.id}')">${escH(c.name)}<div class="sub">${c.students.length} elever</div></button>`).join('')
-    :`<div class="empty"><div class="ico">👥</div><p>Inga klasser tillagda</p></div>`;
+    ?classes.map(c=>{
+      const ownerTxt=entityOwnerText(c);
+      const sub=`${c.students.length} elever${ownerTxt?` · ${ownerTxt}`:''}`;
+      return`<button type="button" class="pick-btn ${selClass===c.id?'sel':''}" aria-pressed="${selClass===c.id?'true':'false'}" onclick="pickC('${c.id}')">${escH(c.name)}<div class="sub">${escH(sub)}</div></button>`;
+    }).join('')
+    :isTeacherUser()&&allClasses.length
+      ?`<div class="empty"><div class="ico">👥</div><p>Inga klasser valda. Gå till Admin och kryssa i.</p></div>`
+      :`<div class="empty"><div class="ico">👥</div><p>Inga klasser tillagda</p></div>`;
   rs.innerHTML=rooms.length
-    ?rooms.map(r=>`<button type="button" class="pick-btn ${selRoom===r.id?'sel':''}" aria-pressed="${selRoom===r.id?'true':'false'}" onclick="pickR('${r.id}')">${escH(r.name)}<div class="sub">${countPlacedDesks(r)} bänkar</div></button>`).join('')
-    :`<div class="empty"><div class="ico">🏫</div><p>Inga salar tillagda</p></div>`;
+    ?rooms.map(r=>{
+      const ownerTxt=entityOwnerText(r);
+      const sub=`${countPlacedDesks(r)} bänkar${ownerTxt?` · ${ownerTxt}`:''}`;
+      return`<button type="button" class="pick-btn ${selRoom===r.id?'sel':''}" aria-pressed="${selRoom===r.id?'true':'false'}" onclick="pickR('${r.id}')">${escH(r.name)}<div class="sub">${escH(sub)}</div></button>`;
+    }).join('')
+    :isTeacherUser()&&allRooms.length
+      ?`<div class="empty"><div class="ico">🏫</div><p>Inga salar valda. Gå till Admin och kryssa i.</p></div>`
+      :`<div class="empty"><div class="ico">🏫</div><p>Inga salar tillagda</p></div>`;
   document.getElementById('shuffle-btn').disabled=!(selClass&&selRoom&&selectedRoom?.desks?.some(d=>!d.inPool));
 }
 function pickC(id){selClass=id;renderHome()}
@@ -197,9 +380,12 @@ function doShuffle(useResultSelection=false){
   // Home shuffle should always use current picks. Result "reshuffle" can opt in to current result ids.
   const roomId=useResultSelection?(shuffleResult?.room?.id||selRoom):selRoom;
   const clsId=useResultSelection?(shuffleResult?.cls?.id||selClass):selClass;
-  const room=getRooms().find(r=>r.id===roomId);
-  const cls=getClasses().find(c=>c.id===clsId);
-  if(!room||!cls)return;
+  const room=getPlacementRooms().find(r=>r.id===roomId);
+  const cls=getPlacementClasses().find(c=>c.id===clsId);
+  if(!room||!cls){
+    if(isTeacherUser())showToast('Välj klass och sal i Admin först.');
+    return;
+  }
   const placed=room.desks.filter(d=>!d.inPool);
   if(!placed.length){
     showToast('Vald sal har inga placerade bänkar ännu.');
@@ -227,6 +413,16 @@ function renderResult(fromSaved){
   editMode=false;
   updateEditModeUI();
   const {room,cls,pairs,savedName}=shuffleResult;
+  const isReadOnlySaved=!!(fromSaved&&shuffleResult?.savedEditable===false);
+  const saveBtn=document.getElementById('save-placement-btn');
+  const editBtn=document.getElementById('edit-mode-btn');
+  if(saveBtn){
+    saveBtn.textContent=isReadOnlySaved?'💾 Spara som ny':'💾 Spara placering';
+  }
+  if(editBtn){
+    editBtn.disabled=isReadOnlySaved;
+    editBtn.title=isReadOnlySaved?'Skrivskyddad placering':'';
+  }
   document.getElementById('res-title').textContent=savedName||`${room.name} — ${cls.name}`;
   document.getElementById('res-sub').textContent=
     `${pairs.filter(p=>p.student).length} av ${cls.students.length||pairs.filter(p=>p.student).length} elever placerade • ${pairs.length} bänkar`
@@ -277,6 +473,10 @@ function renderResult(fromSaved){
 }
 
 function toggleEditMode(){
+  if(shuffleResult?.savedEditable===false){
+    showToast('Placeringen är skrivskyddad.');
+    return;
+  }
   editMode=!editMode;
   updateEditModeUI();
 }
@@ -477,13 +677,14 @@ function openSaveModal(){
 async function confirmSavePlacement(){
   if(!shuffleResult)return;
   const {room,cls,pairs,savedId}=shuffleResult;
+  const saveAsCopy=shuffleResult?.savedEditable===false;
   const rawName=document.getElementById('save-name-input').value.trim();
   const now=new Date();
   const autoName=`${cls.name||'Klass'} — ${room.name||'Sal'} (${now.toLocaleDateString('sv-SE',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})})`;
   const name=rawName||autoName;
 
   const entry={
-    id:savedId||'pl_'+Date.now(),
+    id:(!saveAsCopy&&savedId)?savedId:'pl_'+Date.now(),
     name,
     roomId:room.id||null,
     classId:cls.id||null,
@@ -501,10 +702,15 @@ async function confirmSavePlacement(){
     const persistedId=res?.item?.id||entry.id;
     shuffleResult.savedId=persistedId;
     shuffleResult.savedName=name;
+    shuffleResult.savedEditable=true;
     closeModal('save-modal');
-    showToast('✓ Placering sparad!');
+    showToast(saveAsCopy?'✓ Sparad som ny kopia!':'✓ Placering sparad!');
   }catch(e){
     console.error(e);
+    if(isForbiddenError(e)){
+      notifyError(e?.data?.message||'Du kan bara ändra dina egna placeringar.');
+      return;
+    }
     notifyError('Kunde inte spara placeringen.');
   }
 }
@@ -528,33 +734,43 @@ function renderSavedList(){
     return;
   }
   el.innerHTML=saved.map(p=>{
+    const ownerUserId=Number(p.ownerUserId||0);
+    const canEdit=canEditSavedPlacement(p);
+    const domKey=buildSavedDomKey(ownerUserId,p.id);
+    const safeId=String(p.id||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     const d=new Date(p.savedAt);
     const dateStr=Number.isNaN(d.getTime())
       ?'okänt datum'
       :d.toLocaleDateString('sv-SE',{weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
     const count=Array.isArray(p.pairs)?p.pairs.reduce((sum,pair)=>sum+(pair?.student?1:0),0):0;
     const byMeta=p.createdByName?` · skapad av ${escH(p.createdByName)}`:'';
+    const lockMeta=canEdit?'':' · skrivskyddad';
     const createdMeta=p.createdAt?` · ${escH(fmtMetaDate(p.createdAt))}`:'';
-    return`<div class="placement-item" id="pi_${p.id}" role="button" tabindex="0" onclick="openSavedPlacement('${p.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSavedPlacement('${p.id}')}">
+    const deleteBtn=canEdit
+      ?`<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();confirmDeleteSaved('${domKey}')">🗑 Ta bort</button>`
+      :`<span class="hint">Skrivskyddad</span>`;
+    const confirmRow=canEdit
+      ?`<div class="delete-confirm hidden" id="dc_${domKey}">
+      <span>Är du säker?</span>
+      <button class="btn btn-danger btn-sm" onclick="deleteSaved(${ownerUserId},'${safeId}')">Ja, radera</button>
+      <button class="btn btn-secondary btn-sm" onclick="cancelDelete('${domKey}')">Avbryt</button>
+    </div>`
+      :'';
+    return`<div class="placement-item" id="pi_${domKey}" role="button" tabindex="0" onclick="openSavedPlacement(${ownerUserId},'${safeId}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSavedPlacement(${ownerUserId},'${safeId}')}">
       <div class="pi-main">
         <div class="pi-name">${escH(p.name)}</div>
-        <div class="pi-meta">${escH(p.className)} · ${escH(p.roomName)} · ${count} elever · ${dateStr}${byMeta}${createdMeta}</div>
+        <div class="pi-meta">${escH(p.className)} · ${escH(p.roomName)} · ${count} elever · ${dateStr}${byMeta}${lockMeta}${createdMeta}</div>
       </div>
       <div class="pi-actions">
-        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();openSavedPlacement('${p.id}')">Öppna</button>
-        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();confirmDeleteSaved('${p.id}')">🗑 Ta bort</button>
+        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();openSavedPlacement(${ownerUserId},'${safeId}')">Öppna</button>
+        ${deleteBtn}
       </div>
-    </div>
-    <div class="delete-confirm hidden" id="dc_${p.id}">
-      <span>Är du säker?</span>
-      <button class="btn btn-danger btn-sm" onclick="deleteSaved('${p.id}')">Ja, radera</button>
-      <button class="btn btn-secondary btn-sm" onclick="cancelDelete('${p.id}')">Avbryt</button>
-    </div>`;
+    </div>${confirmRow}`;
   }).join('');
 }
 
-function openSavedPlacement(id){
-  const entry=getSaved().find(p=>p.id===id);
+function openSavedPlacement(ownerUserId,id){
+  const entry=getSaved().find(p=>Number(p.ownerUserId||0)===Number(ownerUserId)&&p.id===id);
   if(!entry)return;
   // reconstruct a shuffleResult-like object from the saved entry
   // We don't have the original room/class objects, so we build minimal proxies
@@ -566,7 +782,9 @@ function openSavedPlacement(id){
       desk:{x:p.desk.x,y:p.desk.y,rotation:p.desk.rotation||0}
     })),
     savedId:entry.id,
-    savedName:entry.name
+    savedName:entry.name,
+    savedEditable:canEditSavedPlacement(entry),
+    ownerUserId:Number(entry.ownerUserId||0)
   };
   // Flag that this came from a saved placement — we keep the class/room ids
   // for re-shuffle if available
@@ -578,22 +796,30 @@ function openSavedPlacement(id){
   renderResult(true); // true = from saved, skip confetti
 }
 
-function confirmDeleteSaved(id){
+function confirmDeleteSaved(domKey){
   // hide any other open confirmations first
   document.querySelectorAll('.delete-confirm').forEach(el=>{
-    if(el.id!=='dc_'+id)el.classList.add('hidden');
+    if(el.id!=='dc_'+domKey)el.classList.add('hidden');
   });
-  document.getElementById('dc_'+id)?.classList.toggle('hidden');
+  document.getElementById('dc_'+domKey)?.classList.toggle('hidden');
 }
-function cancelDelete(id){
-  document.getElementById('dc_'+id)?.classList.add('hidden');
+function cancelDelete(domKey){
+  document.getElementById('dc_'+domKey)?.classList.add('hidden');
 }
-async function deleteSaved(id){
+async function deleteSaved(ownerUserId,id){
+  if(Number(ownerUserId)!==Number(currentUser?.id)){
+    notifyError('Du kan bara ta bort dina egna placeringar.');
+    return;
+  }
   try{
     await queuePersistDelete('saved',id);
     showToast('Placering borttagen.');
   }catch(e){
     console.error(e);
+    if(isForbiddenError(e)){
+      notifyError(e?.data?.message||'Du kan bara ta bort dina egna placeringar.');
+      return;
+    }
     notifyError('Kunde inte ta bort placeringen.');
   }
 }
@@ -658,12 +884,12 @@ function confetti(){
 
 // ═══════════════ ADMIN ═══════════════
 let adminUsersCache=[];
-let teacherDirectory=[];
 function checkPw(){renderAdmin()}
 function adminLogout(){
   window.location.href='logout.php';
 }
 function aTab(t){
+  if(t==='users'&&!isSiteAdmin)t='rooms';
   const tabs=['rooms','classes','users'];
   document.querySelectorAll('.atab').forEach((b,i)=>b.classList.toggle('active',tabs[i]===t));
   document.querySelectorAll('.asec').forEach(s=>s.classList.remove('active'));
@@ -673,24 +899,24 @@ function aTab(t){
 function renderAdmin(){
   const login=document.getElementById('admin-login-screen');
   const panel=document.getElementById('admin-panel');
-  if(!isSiteAdmin){
-    adminIn=false;
-    login.style.display='block';
-    panel.style.display='none';
-    loadTeacherDirectory().then(()=>{
-      const rows=teacherDirectory.map(u=>`<div class="list-item"><div><div class="li-name">${escH(u.fullName)}</div><div class="li-sub">${escH(u.email)} · @${escH(u.username)} · ${escH(u.role)}</div></div></div>`).join('');
-      login.innerHTML=`<div class="section-title">Lärarkatalog</div>
-      <p class="muted mt2 mb2" style="font-size:.82rem">Kontaktuppgifter till godkända användare.</p>
-      <div style="text-align:left">${rows||'<p class="muted">Inga användare hittades.</p>'}</div>`;
-    });
-    return;
-  }
-  adminIn=true;
+  const tabs=document.querySelectorAll('.atab');
+  const usersTab=tabs[2]||null;
+  const usersSection=document.getElementById('asec-users');
+
   login.style.display='none';
   panel.style.display='block';
+  if(usersTab)usersTab.style.display=isSiteAdmin?'':'none';
+  if(usersSection){
+    usersSection.style.display=isSiteAdmin?'':'none';
+    if(!isSiteAdmin)usersSection.classList.remove('active');
+  }
+  if(!isSiteAdmin&&usersTab?.classList.contains('active'))aTab('rooms');
+
   renderRoomList();
   renderClassList();
-  loadAdminUsers().then(renderAdminUsersSection);
+  if(isSiteAdmin){
+    loadAdminUsers().then(renderAdminUsersSection);
+  }
 }
 
 function fmtMetaDate(s){
@@ -727,16 +953,6 @@ function upsertAdminUserCache(user){
   if(idx>=0)next[idx]=user;
   else next.push(user);
   adminUsersCache=sortAdminUsers(next);
-}
-
-async function loadTeacherDirectory(){
-  try{
-    const data=await apiRequest('api/users.php');
-    teacherDirectory=Array.isArray(data?.users)?data.users:[];
-  }catch(e){
-    console.error(e);
-    teacherDirectory=[];
-  }
 }
 
 async function adminUserAction(action,userId,role='teacher'){
@@ -880,21 +1096,44 @@ function renderAdminUsersSection(){
 
 function renderRoomList(){
   const rooms=getRooms(),el=document.getElementById('room-list');
-  if(!rooms.length){el.innerHTML=`<div class="empty"><div class="ico">🏫</div><p>Inga salar</p></div>`;return}
-  el.innerHTML=rooms.map(r=>{
+  const teacherNote=isTeacherUser()
+    ?'<p class="hint admin-pick-note">Kryssa i vilka salar du vill kunna använda i Placera-vyn.</p>'
+    :'';
+  if(!rooms.length){el.innerHTML=`${teacherNote}<div class="empty"><div class="ico">🏫</div><p>Inga salar</p></div>`;return}
+  const rows=rooms.map(r=>{
     const deskCount=countPlacedDesks(r);
+    const editable=canEditEntity(r);
+    const ownerTxt=entityOwnerText(r);
+    const ownership=ownerTxt?(editable?' · min sal':` · ägs av ${escH(ownerTxt)}`):'';
+    const usage=usageByOthersText(r);
+    const pickToggle=isTeacherUser()
+      ?renderTeacherPlacementToggle('room',r.id,isTeacherRoomSelected(r.id))
+      :'';
+    const actions=editable
+      ?`<button class="btn btn-secondary btn-sm" onclick="openEditor('${r.id}')">Redigera</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteRoom('${r.id}')">✕</button>`
+      :`<span class="hint">Skrivskyddad</span>`;
     return`<div class="list-item">
-    <div><div class="li-name">${escH(r.name)}</div><div class="li-sub">${deskCount} bänkar placerade${r.createdByName?` · skapad av ${escH(r.createdByName)}`:''}${r.createdAt?` · ${escH(fmtMetaDate(r.createdAt))}`:''}</div></div>
-    <div class="flex gap2">
-      <button class="btn btn-secondary btn-sm" onclick="openEditor('${r.id}')">Redigera</button>
-      <button class="btn btn-danger btn-sm" onclick="deleteRoom('${r.id}')">✕</button>
-    </div></div>`;
+    <div><div class="li-name">${escH(r.name)}</div><div class="li-sub">${deskCount} bänkar placerade${ownership}${usage}${r.createdAt?` · ${escH(fmtMetaDate(r.createdAt))}`:''}</div></div>
+    <div class="flex gap2">${pickToggle}${actions}</div></div>`;
   }).join('');
+  el.innerHTML=teacherNote+rows;
 }
 async function deleteRoom(id){
+  const room=getRooms().find(r=>r.id===id)||null;
+  if(room&&!canEditEntity(room)){
+    notifyError('Du kan bara radera dina egna salar.');
+    return;
+  }
   if(!confirm('Radera denna sal?'))return;
   try{
     await queuePersistDelete('rooms',id);
+    if(isTeacherUser()&&isTeacherRoomSelected(id)){
+      void saveTeacherPlacementSelection({
+        roomIds:teacherPlacementSelection.roomIds.filter(x=>x!==String(id)),
+        classIds:[...teacherPlacementSelection.classIds]
+      });
+    }
     if(selRoom===id){
       selRoom=null;
       renderHome();
@@ -902,23 +1141,45 @@ async function deleteRoom(id){
     showToast('Sal borttagen.');
   }catch(e){
     console.error(e);
+    if(isForbiddenError(e)){
+      notifyError(e?.data?.message||'Du kan bara radera dina egna salar.');
+      return;
+    }
     notifyError('Kunde inte radera salen.');
   }
 }
 
 function renderClassList(){
   const classes=getClasses(),el=document.getElementById('class-list');
-  if(!classes.length){el.innerHTML=`<div class="empty"><div class="ico">👥</div><p>Inga klasser</p></div>`;return}
-  el.innerHTML=classes.map(c=>`<div class="list-item">
-    <div><div class="li-name">${escH(c.name)}</div><div class="li-sub">${c.students.length} elever${c.createdByName?` · skapad av ${escH(c.createdByName)}`:''}${c.createdAt?` · ${escH(fmtMetaDate(c.createdAt))}`:''}</div></div>
-    <div class="flex gap2">
-      <button class="btn btn-secondary btn-sm" onclick="openClassModal('${c.id}')">Redigera</button>
-      <button class="btn btn-danger btn-sm" onclick="deleteClass('${c.id}')">✕</button>
-    </div></div>`).join('');
+  const teacherNote=isTeacherUser()
+    ?'<p class="hint admin-pick-note">Kryssa i vilka klasser du vill kunna använda i Placera-vyn.</p>'
+    :'';
+  if(!classes.length){el.innerHTML=`${teacherNote}<div class="empty"><div class="ico">👥</div><p>Inga klasser</p></div>`;return}
+  const rows=classes.map(c=>{
+    const editable=canEditEntity(c);
+    const ownerTxt=entityOwnerText(c);
+    const ownership=ownerTxt?(editable?' · min klass':` · ägs av ${escH(ownerTxt)}`):'';
+    const usage=usageByOthersText(c);
+    const pickToggle=isTeacherUser()
+      ?renderTeacherPlacementToggle('class',c.id,isTeacherClassSelected(c.id))
+      :'';
+    const actions=editable
+      ?`<button class="btn btn-secondary btn-sm" onclick="openClassModal('${c.id}')">Redigera</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteClass('${c.id}')">✕</button>`
+      :`<span class="hint">Skrivskyddad</span>`;
+    return`<div class="list-item">
+    <div><div class="li-name">${escH(c.name)}</div><div class="li-sub">${c.students.length} elever${ownership}${usage}${c.createdAt?` · ${escH(fmtMetaDate(c.createdAt))}`:''}</div></div>
+    <div class="flex gap2">${pickToggle}${actions}</div></div>`;
+  }).join('');
+  el.innerHTML=teacherNote+rows;
 }
 function openClassModal(id){
   editingClassId=id;
   const cls=id?getClasses().find(c=>c.id===id):null;
+  if(cls&&!canEditEntity(cls)){
+    notifyError('Du kan bara redigera dina egna klasser.');
+    return;
+  }
   document.getElementById('class-modal-title').textContent=cls?'Redigera klass':'Ny klass';
   document.getElementById('class-name-in').value=cls?cls.name:'';
   document.getElementById('class-students-in').value=cls?cls.students.join('\n'):'';
@@ -930,6 +1191,10 @@ async function saveClass(){
   const students=document.getElementById('class-students-in').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(!students.length){notifyError('Lägg till minst en elev.');return}
   const existing=editingClassId?getClasses().find(c=>c.id===editingClassId):null;
+  if(existing&&!canEditEntity(existing)){
+    notifyError('Du kan bara redigera dina egna klasser.');
+    return;
+  }
   const entry=existing?{...existing,name,students}:{id:'cls_'+Date.now(),name,students};
   try{
     await queuePersistUpsert('classes',entry);
@@ -937,13 +1202,28 @@ async function saveClass(){
     showToast('Klass sparad.');
   }catch(e){
     console.error(e);
+    if(isForbiddenError(e)){
+      notifyError(e?.data?.message||'Du kan bara ändra dina egna klasser.');
+      return;
+    }
     notifyError('Kunde inte spara klassen.');
   }
 }
 async function deleteClass(id){
+  const cls=getClasses().find(c=>c.id===id)||null;
+  if(cls&&!canEditEntity(cls)){
+    notifyError('Du kan bara radera dina egna klasser.');
+    return;
+  }
   if(!confirm('Radera klass?'))return;
   try{
     await queuePersistDelete('classes',id);
+    if(isTeacherUser()&&isTeacherClassSelected(id)){
+      void saveTeacherPlacementSelection({
+        roomIds:[...teacherPlacementSelection.roomIds],
+        classIds:teacherPlacementSelection.classIds.filter(x=>x!==String(id))
+      });
+    }
     if(selClass===id){
       selClass=null;
       renderHome();
@@ -951,6 +1231,10 @@ async function deleteClass(id){
     showToast('Klass borttagen.');
   }catch(e){
     console.error(e);
+    if(isForbiddenError(e)){
+      notifyError(e?.data?.message||'Du kan bara radera dina egna klasser.');
+      return;
+    }
     notifyError('Kunde inte radera klassen.');
   }
 }
@@ -1076,6 +1360,10 @@ function bindEditorInteractions(){
 function openEditor(id){
   editingRoomId=id;
   const room=id?getRooms().find(r=>r.id===id):null;
+  if(room&&!canEditEntity(room)){
+    notifyError('Du kan bara redigera dina egna salar.');
+    return;
+  }
   document.getElementById('editor-title').textContent=room?'Redigera sal':'Ny sal';
   document.getElementById('editor-room-name').value=room?room.name:'';
   selectedId=null;
@@ -1463,6 +1751,10 @@ async function saveRoom(){
   const name=document.getElementById('editor-room-name').value.trim();
   if(!name){notifyError('Ange ett namn för salen.');return}
   const existing=editingRoomId?getRooms().find(r=>r.id===editingRoomId):null;
+  if(existing&&!canEditEntity(existing)){
+    notifyError('Du kan bara redigera dina egna salar.');
+    return;
+  }
   const data=existing?{...existing,name,desks:editorDesks.map(d=>({...d}))}:{id:'room_'+Date.now(),name,desks:editorDesks.map(d=>({...d}))};
   try{
     await queuePersistUpsert('rooms',data);
@@ -1470,6 +1762,10 @@ async function saveRoom(){
     showToast('Sal sparad.');
   }catch(e){
     console.error(e);
+    if(isForbiddenError(e)){
+      notifyError(e?.data?.message||'Du kan bara ändra dina egna salar.');
+      return;
+    }
     notifyError('Kunde inte spara salen.');
   }
 }
@@ -1763,11 +2059,13 @@ async function initApp(){
   updateUserBadge();
   try{
     await refreshStateFromServer();
+    await loadTeacherPlacementSelection();
   }catch(e){
     console.error(e);
     notifyError('Kunde inte ladda data från servern. Kontrollera inloggning och databasanslutning.');
+    setTeacherPlacementSelection({roomIds:[],classIds:[]},{render:false});
   }
-  adminIn=isSiteAdmin;
+  adminIn=false;
   renderHome();
 }
 

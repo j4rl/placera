@@ -109,3 +109,14 @@ CREATE TABLE IF NOT EXISTS plc_placements (
     ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS plc_teacher_placement_selection (
+  user_id INT UNSIGNED NOT NULL,
+  room_ids_json LONGTEXT NOT NULL,
+  class_ids_json LONGTEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id),
+  CONSTRAINT fk_plc_teacher_selection_user
+    FOREIGN KEY (user_id) REFERENCES plc_users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
