@@ -26,26 +26,9 @@ Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare
 
 ## Uppdateringar
 
-### 2026-03-17 00:00
-
-- Ändring: Initierade automatisk uppdateringslogg i README via git-hook.
-
 ### 2026-03-17 17:59
 
-- Ändring: 0.0.7
-- Filer: .githooks/commit-msg,.githooks/pre-commit app.js,app.php
-
-### 2026-03-17 17:59
-
-- Ändring: Har nu lagt till uppdateringslogg i README.md
-
-### 2026-03-17 18:00
-
-- Ändring: Uppdatering utan commit-rubrik
-
-### 2026-03-17 18:05
-
-- Ändring: Revertade automatisk git-hook för README för att undvika loopar. Uppdateringar i README görs manuellt framöver.
+- Ändring: Har nu lagt till uppdateringslogg i README.md för att dokumentera ändringar och förbättringar i appen över tid.
 
 ### 2026-03-17
 
