@@ -89,7 +89,8 @@ $csrf = plc_csrf_token();
     <div class="card">
       <div class="hero">
         <h1>Placera</h1>
-        <p>Placera är ett verktyg för lärare som gör det snabbt att skapa, slumpa, justera och skriva ut klassrumsplaceringar.</p>
+        <p>Placera är ett verktyg för lärare som gör det snabbt att skapa, slumpa, justera och skriva ut klassrumsplaceringar.</p><br><br>
+        <p><em>Skapat av Charlie Jarl <strong>&copy;j4rl</strong></em></p>
       </div>
       <div class="panel">
         <?php if ($err !== ''): ?>
