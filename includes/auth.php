@@ -92,5 +92,5 @@ function plc_require_admin(bool $asJson = false): array
     if ($asJson) {
         plc_json(['ok' => false, 'error' => 'forbidden'], 403);
     }
-    plc_redirect('/placera/app.php');
+    plc_redirect('app.php');
 }
