@@ -26,6 +26,15 @@ Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare
 
 ## Uppdateringar
 
+### 2026-03-17 18:57
+
+- Ändring: Åtgärdade CSRF-validering så tomma eller saknade token alltid blockeras i både API och formulär.
+- Ändring: Lade till inloggnings-throttling med tidsbaserad spärr vid upprepade misslyckade försök.
+- Ändring: Säkrare sparflöde i klienten där ändringar bekräftas av server innan UI uppdateras, för att undvika osynk mellan klient och databas.
+- Ändring: Förbättrad tillgänglighet med fler knapp-typer/aria-labels, keyboardstöd för sparade placeringar, Esc-stängning av modaler och tydligare fokusmarkering.
+- Ändring: Prestandaförbättring i drag-and-drop genom att undvika full ommarkering av alla bänkar vid varje pekar-rörelse.
+- Ändring: Lade till stöd för `prefers-reduced-motion` och minskade blockerande alert-dialoger till förmån för toast-meddelanden.
+
 ### 2026-03-17 17:59
 
 - Ändring: Har nu lagt till uppdateringslogg i README.md för att dokumentera ändringar och förbättringar i appen över tid.

@@ -3,6 +3,106 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/includes/auth.php';
 
+function plc_login_throttle_key(string $identity): string
+{
+    $ip = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+    $normalizedIdentity = function_exists('mb_strtolower')
+        ? mb_strtolower(trim($identity))
+        : strtolower(trim($identity));
+    return hash('sha256', $ip . '|' . $normalizedIdentity);
+}
+
+function plc_login_read_throttle_bucket(): array
+{
+    $bucket = $_SESSION['plc_login_throttle'] ?? [];
+    return is_array($bucket) ? $bucket : [];
+}
+
+function plc_login_cleanup_throttle_bucket(array $bucket, int $now): array
+{
+    $maxAge = 60 * 60;
+    foreach ($bucket as $key => $entry) {
+        if (!is_array($entry)) {
+            unset($bucket[$key]);
+            continue;
+        }
+        $last = (int)($entry['last'] ?? 0);
+        $lockUntil = (int)($entry['lock_until'] ?? 0);
+        if ($last > 0 && ($last + $maxAge) < $now && $lockUntil < $now) {
+            unset($bucket[$key]);
+        }
+    }
+    return $bucket;
+}
+
+function plc_login_wait_seconds(string $key): int
+{
+    $now = time();
+    $bucket = plc_login_cleanup_throttle_bucket(plc_login_read_throttle_bucket(), $now);
+    $_SESSION['plc_login_throttle'] = $bucket;
+    $entry = $bucket[$key] ?? null;
+    if (!is_array($entry)) {
+        return 0;
+    }
+    $lockUntil = (int)($entry['lock_until'] ?? 0);
+    return $lockUntil > $now ? ($lockUntil - $now) : 0;
+}
+
+function plc_login_register_failure(string $key): int
+{
+    $now = time();
+    $window = 15 * 60;
+    $bucket = plc_login_cleanup_throttle_bucket(plc_login_read_throttle_bucket(), $now);
+    $entry = $bucket[$key] ?? [
+        'count' => 0,
+        'first' => $now,
+        'last' => $now,
+        'lock_until' => 0,
+    ];
+    if (!is_array($entry)) {
+        $entry = [
+            'count' => 0,
+            'first' => $now,
+            'last' => $now,
+            'lock_until' => 0,
+        ];
+    }
+
+    $first = (int)($entry['first'] ?? $now);
+    if (($first + $window) < $now) {
+        $entry['count'] = 0;
+        $entry['first'] = $now;
+    }
+
+    $entry['count'] = (int)($entry['count'] ?? 0) + 1;
+    $entry['last'] = $now;
+
+    $wait = 0;
+    if ($entry['count'] >= 5) {
+        $penaltyStep = min(6, $entry['count'] - 5);
+        $wait = (int)min(300, 5 * (2 ** max(0, $penaltyStep - 1)));
+        $entry['lock_until'] = $now + $wait;
+    } else {
+        $entry['lock_until'] = 0;
+    }
+
+    $bucket[$key] = $entry;
+    $_SESSION['plc_login_throttle'] = $bucket;
+    return $wait;
+}
+
+function plc_login_clear_throttle(string $key): void
+{
+    $bucket = plc_login_read_throttle_bucket();
+    unset($bucket[$key]);
+    $_SESSION['plc_login_throttle'] = $bucket;
+}
+
+function plc_login_slowdown(): void
+{
+    usleep(random_int(150000, 320000));
+}
+
 if (plc_current_user()) {
     plc_redirect('app.php');
 }
@@ -12,31 +112,49 @@ $ok = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $csrf = (string)($_POST['_csrf'] ?? '');
-    if (!hash_equals((string)($_SESSION['plc_csrf'] ?? ''), $csrf)) {
+    $sessionCsrf = (string)($_SESSION['plc_csrf'] ?? '');
+    if ($sessionCsrf === '' || $csrf === '' || !hash_equals($sessionCsrf, $csrf)) {
         $err = 'Ogiltig begäran. Ladda om sidan och försök igen.';
     } else {
         $db = plc_db();
         $identity = trim((string)($_POST['identity'] ?? ''));
         $password = (string)($_POST['password'] ?? '');
+        $throttleKey = plc_login_throttle_key($identity);
 
-        $stmt = $db->prepare('SELECT id, password_hash, status FROM plc_users WHERE username = ? OR email = ? LIMIT 1');
-        $stmt->bind_param('ss', $identity, $identity);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-
-        if (!$row || !password_verify($password, (string)$row['password_hash'])) {
-            $err = 'Fel inloggningsuppgifter.';
+        $wait = plc_login_wait_seconds($throttleKey);
+        if ($wait > 0) {
+            $err = 'För många inloggningsförsök. Vänta ' . $wait . ' sekunder och försök igen.';
         } else {
-            $status = (string)$row['status'];
-            if ($status === 'pending') {
-                $err = 'Kontot väntar på admin-godkännande.';
-            } elseif ($status === 'rejected') {
-                $err = 'Ansökan har avslagits.';
-            } elseif ($status === 'disabled') {
-                $err = 'Kontot är avstängt.';
+            $stmt = $db->prepare('SELECT id, password_hash, status FROM plc_users WHERE username = ? OR email = ? LIMIT 1');
+            $stmt->bind_param('ss', $identity, $identity);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+
+            if (!$row || !password_verify($password, (string)$row['password_hash'])) {
+                plc_login_slowdown();
+                $penalty = plc_login_register_failure($throttleKey);
+                $err = $penalty > 0
+                    ? 'För många inloggningsförsök. Vänta ' . $penalty . ' sekunder och försök igen.'
+                    : 'Fel inloggningsuppgifter.';
             } else {
-                plc_login_user((int)$row['id']);
-                plc_redirect('app.php');
+                $status = (string)$row['status'];
+                if ($status === 'pending') {
+                    plc_login_slowdown();
+                    plc_login_register_failure($throttleKey);
+                    $err = 'Kontot väntar på admin-godkännande.';
+                } elseif ($status === 'rejected') {
+                    plc_login_slowdown();
+                    plc_login_register_failure($throttleKey);
+                    $err = 'Ansökan har avslagits.';
+                } elseif ($status === 'disabled') {
+                    plc_login_slowdown();
+                    plc_login_register_failure($throttleKey);
+                    $err = 'Kontot är avstängt.';
+                } else {
+                    plc_login_clear_throttle($throttleKey);
+                    plc_login_user((int)$row['id']);
+                    plc_redirect('app.php');
+                }
             }
         }
     }

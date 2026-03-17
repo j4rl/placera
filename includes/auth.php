@@ -14,8 +14,15 @@ function plc_csrf_token(): string
 
 function plc_verify_csrf_or_403(): void
 {
+    $sessionToken = $_SESSION['plc_csrf'] ?? '';
     $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($_POST['_csrf'] ?? '');
-    if (!is_string($token) || !hash_equals((string)($_SESSION['plc_csrf'] ?? ''), $token)) {
+    if (
+        !is_string($sessionToken) ||
+        $sessionToken === '' ||
+        !is_string($token) ||
+        $token === '' ||
+        !hash_equals($sessionToken, $token)
+    ) {
         plc_json(['ok' => false, 'error' => 'invalid_csrf'], 403);
     }
 }

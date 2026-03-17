@@ -12,7 +12,8 @@ $ok = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $csrf = (string)($_POST['_csrf'] ?? '');
-    if (!hash_equals((string)($_SESSION['plc_csrf'] ?? ''), $csrf)) {
+    $sessionCsrf = (string)($_SESSION['plc_csrf'] ?? '');
+    if ($sessionCsrf === '' || $csrf === '' || !hash_equals($sessionCsrf, $csrf)) {
         $err = 'Ogiltig begäran. Ladda om sidan och försök igen.';
     } else {
         $db = plc_db();
@@ -139,4 +140,3 @@ $csrf = plc_csrf_token();
   </div>
 </body>
 </html>
-

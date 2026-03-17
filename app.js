@@ -9,6 +9,8 @@ let isSiteAdmin=(currentUser?.role||'')==='admin';
 let serverState={rooms:[],classes:[],saved:[]};
 let persistQueue=Promise.resolve();
 const STATE_KEYS=['rooms','classes','saved'];
+const colorSchemeQuery=window.matchMedia('(prefers-color-scheme: dark)');
+const reducedMotionQuery=window.matchMedia('(prefers-reduced-motion: reduce)');
 
 function cloneDeep(v){
   try{return structuredClone(v)}catch{return JSON.parse(JSON.stringify(v))}
@@ -76,16 +78,16 @@ function applyPersistResponse(key,res){
 
 function queuePersist(payload){
   if(!STATE_KEYS.includes(payload?.key))return Promise.resolve();
-  persistQueue=persistQueue.then(async()=>{
+  persistQueue=persistQueue.catch(()=>null).then(async()=>{
     const res=await apiRequest('api/state.php',{method:'POST',body:JSON.stringify(payload)});
     applyPersistResponse(payload.key,res);
     return res;
-  }).catch(err=>{
+  });
+  return persistQueue.catch(err=>{
     console.error(err);
     showToast('Kunde inte spara till servern.');
     throw err;
   });
-  return persistQueue;
 }
 
 function queuePersistReplace(key,val){
@@ -116,7 +118,7 @@ const DB={
       return;
     }
     serverState[k]=cloneDeep(v);
-    queuePersistReplace(k,serverState[k]);
+    queuePersistReplace(k,serverState[k]).catch(()=>{});
   }
 };
 const getRooms=()=>DB.get('rooms',[]);
@@ -180,10 +182,10 @@ function renderHome(){
   const rs=document.getElementById('room-sel');
   const selectedRoom=rooms.find(r=>r.id===selRoom)||null;
   cs.innerHTML=classes.length
-    ?classes.map(c=>`<div class="pick-btn ${selClass===c.id?'sel':''}" onclick="pickC('${c.id}')">${escH(c.name)}<div class="sub">${c.students.length} elever</div></div>`).join('')
+    ?classes.map(c=>`<button type="button" class="pick-btn ${selClass===c.id?'sel':''}" aria-pressed="${selClass===c.id?'true':'false'}" onclick="pickC('${c.id}')">${escH(c.name)}<div class="sub">${c.students.length} elever</div></button>`).join('')
     :`<div class="empty"><div class="ico">👥</div><p>Inga klasser tillagda</p></div>`;
   rs.innerHTML=rooms.length
-    ?rooms.map(r=>`<div class="pick-btn ${selRoom===r.id?'sel':''}" onclick="pickR('${r.id}')">${escH(r.name)}<div class="sub">${countPlacedDesks(r)} bänkar</div></div>`).join('')
+    ?rooms.map(r=>`<button type="button" class="pick-btn ${selRoom===r.id?'sel':''}" aria-pressed="${selRoom===r.id?'true':'false'}" onclick="pickR('${r.id}')">${escH(r.name)}<div class="sub">${countPlacedDesks(r)} bänkar</div></button>`).join('')
     :`<div class="empty"><div class="ico">🏫</div><p>Inga salar tillagda</p></div>`;
   document.getElementById('shuffle-btn').disabled=!(selClass&&selRoom&&selectedRoom?.desks?.some(d=>!d.inPool));
 }
@@ -214,6 +216,7 @@ function fisher(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random(
 // ── drag-swap state ──
 let dragPairIdx=null;
 let ghost=null;
+let dropTargetEl=null;
 
 let resultFromSaved=false;
 let editMode=false;
@@ -297,6 +300,10 @@ function updateEditModeUI(){
   } else {
     btn.textContent='✏️ Redigera placering';
     btn.classList.remove('btn-primary');btn.classList.add('btn-secondary');
+    if(dropTargetEl){
+      dropTargetEl.classList.remove('drop-target');
+      dropTargetEl=null;
+    }
     // detach drag from all desks
     canvas.querySelectorAll('.res-desk').forEach(el=>{
       el.classList.remove('draggable','dragging','drop-target');
@@ -383,11 +390,12 @@ function moveGhost(cx,cy){
 }
 
 function highlightTarget(cx,cy,canvas){
-  // clear all highlights
-  canvas.querySelectorAll('.res-desk').forEach(d=>d.classList.remove('drop-target'));
   const target=deskAtPoint(cx,cy,canvas);
-  if(target&&parseInt(target.dataset.idx)!==dragPairIdx)
-    target.classList.add('drop-target');
+  const validTarget=(target&&parseInt(target.dataset.idx)!==dragPairIdx)?target:null;
+  if(validTarget===dropTargetEl)return;
+  if(dropTargetEl)dropTargetEl.classList.remove('drop-target');
+  dropTargetEl=validTarget;
+  if(dropTargetEl)dropTargetEl.classList.add('drop-target');
 }
 
 function deskAtPoint(cx,cy,canvas){
@@ -399,7 +407,10 @@ function deskAtPoint(cx,cy,canvas){
 function finishSwap(cx,cy,canvas,srcEl){
   // clean up ghost
   if(ghost){ghost.remove();ghost=null}
-  canvas.querySelectorAll('.res-desk').forEach(d=>d.classList.remove('drop-target'));
+  if(dropTargetEl){
+    dropTargetEl.classList.remove('drop-target');
+    dropTargetEl=null;
+  }
   srcEl.classList.remove('dragging');
 
   if(dragPairIdx===null)return;
@@ -463,7 +474,7 @@ function openSaveModal(){
   setTimeout(()=>{const inp=document.getElementById('save-name-input');inp.focus();inp.select();},80);
 }
 
-function confirmSavePlacement(){
+async function confirmSavePlacement(){
   if(!shuffleResult)return;
   const {room,cls,pairs,savedId}=shuffleResult;
   const rawName=document.getElementById('save-name-input').value.trim();
@@ -485,12 +496,17 @@ function confirmSavePlacement(){
     }))
   };
 
-  shuffleResult.savedId=entry.id;
-  shuffleResult.savedName=name;
-  upsertStateItem('saved',entry);
-  queuePersistUpsert('saved',entry);
-  closeModal('save-modal');
-  showToast('✓ Placering sparad!');
+  try{
+    const res=await queuePersistUpsert('saved',entry);
+    const persistedId=res?.item?.id||entry.id;
+    shuffleResult.savedId=persistedId;
+    shuffleResult.savedName=name;
+    closeModal('save-modal');
+    showToast('✓ Placering sparad!');
+  }catch(e){
+    console.error(e);
+    notifyError('Kunde inte spara placeringen.');
+  }
 }
 
 function showToast(msg){
@@ -498,6 +514,10 @@ function showToast(msg){
   t.textContent=msg;
   t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),2800);
+}
+
+function notifyError(msg){
+  showToast('⚠ '+msg);
 }
 
 function renderSavedList(){
@@ -509,11 +529,13 @@ function renderSavedList(){
   }
   el.innerHTML=saved.map(p=>{
     const d=new Date(p.savedAt);
-    const dateStr=d.toLocaleDateString('sv-SE',{weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
+    const dateStr=Number.isNaN(d.getTime())
+      ?'okänt datum'
+      :d.toLocaleDateString('sv-SE',{weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
     const count=Array.isArray(p.pairs)?p.pairs.reduce((sum,pair)=>sum+(pair?.student?1:0),0):0;
     const byMeta=p.createdByName?` · skapad av ${escH(p.createdByName)}`:'';
     const createdMeta=p.createdAt?` · ${escH(fmtMetaDate(p.createdAt))}`:'';
-    return`<div class="placement-item" id="pi_${p.id}" onclick="openSavedPlacement('${p.id}')">
+    return`<div class="placement-item" id="pi_${p.id}" role="button" tabindex="0" onclick="openSavedPlacement('${p.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSavedPlacement('${p.id}')}">
       <div class="pi-main">
         <div class="pi-name">${escH(p.name)}</div>
         <div class="pi-meta">${escH(p.className)} · ${escH(p.roomName)} · ${count} elever · ${dateStr}${byMeta}${createdMeta}</div>
@@ -566,9 +588,14 @@ function confirmDeleteSaved(id){
 function cancelDelete(id){
   document.getElementById('dc_'+id)?.classList.add('hidden');
 }
-function deleteSaved(id){
-  deleteStateItem('saved',id);
-  queuePersistDelete('saved',id);
+async function deleteSaved(id){
+  try{
+    await queuePersistDelete('saved',id);
+    showToast('Placering borttagen.');
+  }catch(e){
+    console.error(e);
+    notifyError('Kunde inte ta bort placeringen.');
+  }
 }
 
 // ═══════════════ PROFILE ═══════════════
@@ -592,10 +619,10 @@ async function saveProfile(){
   const password=(document.getElementById('profile-password1')?.value||'');
   const password2=(document.getElementById('profile-password2')?.value||'');
 
-  if(fullName.length<2){alert('Ange ditt riktiga namn.');return}
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){alert('Ogiltig e-postadress.');return}
-  if(password!==''&&password.length<8){alert('Nytt lösenord måste vara minst 8 tecken.');return}
-  if(password!==password2){alert('Lösenorden matchar inte.');return}
+  if(fullName.length<2){notifyError('Ange ditt riktiga namn.');return}
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){notifyError('Ogiltig e-postadress.');return}
+  if(password!==''&&password.length<8){notifyError('Nytt lösenord måste vara minst 8 tecken.');return}
+  if(password!==password2){notifyError('Lösenorden matchar inte.');return}
 
   try{
     const res=await apiRequest('api/profile.php',{
@@ -603,7 +630,7 @@ async function saveProfile(){
       body:JSON.stringify({fullName,email,password,password2})
     });
     if(!res?.ok||!res.user){
-      alert('Kunde inte spara profil.');
+      notifyError('Kunde inte spara profil.');
       return;
     }
     currentUser=res.user;
@@ -613,12 +640,13 @@ async function saveProfile(){
     showToast('✓ Profil sparad!');
   }catch(e){
     console.error(e);
-    alert(e?.data?.message||'Kunde inte spara profil.');
+    notifyError(e?.data?.message||'Kunde inte spara profil.');
   }
 }
 
 // ═══════════════ CONFETTI ═══════════════
 function confetti(){
+  if(reducedMotionQuery.matches)return;
   const w=document.getElementById('cfWrap');w.innerHTML='';
   const c=['#c8f060','#60c8f0','#f060c8','#f0c860','#fff'];
   for(let i=0;i<60;i++){
@@ -754,11 +782,11 @@ async function saveAdminUserEdit(){
   const password=(document.getElementById('admin-user-password1').value||'');
   const password2=(document.getElementById('admin-user-password2').value||'');
 
-  if(!/^[A-Za-z0-9_.-]{3,50}$/.test(username)){alert('Användarnamn måste vara 3-50 tecken (A-Z, 0-9, _, -, .).');return}
-  if(fullName.length<2){alert('Ange riktigt namn.');return}
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){alert('Ogiltig e-postadress.');return}
-  if(password!==''&&password.length<8){alert('Nytt lösenord måste vara minst 8 tecken.');return}
-  if(password!==password2){alert('Lösenorden matchar inte.');return}
+  if(!/^[A-Za-z0-9_.-]{3,50}$/.test(username)){notifyError('Användarnamn måste vara 3-50 tecken (A-Z, 0-9, _, -, .).');return}
+  if(fullName.length<2){notifyError('Ange riktigt namn.');return}
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){notifyError('Ogiltig e-postadress.');return}
+  if(password!==''&&password.length<8){notifyError('Nytt lösenord måste vara minst 8 tecken.');return}
+  if(password!==password2){notifyError('Lösenorden matchar inte.');return}
 
   try{
     const data=await apiRequest('api/admin_users.php',{
@@ -778,7 +806,7 @@ async function saveAdminUserEdit(){
     showToast('✓ Användare uppdaterad');
   }catch(e){
     console.error(e);
-    alert(e?.data?.message||'Kunde inte spara användaren.');
+    notifyError(e?.data?.message||'Kunde inte spara användaren.');
   }
 }
 
@@ -863,11 +891,19 @@ function renderRoomList(){
     </div></div>`;
   }).join('');
 }
-function deleteRoom(id){
+async function deleteRoom(id){
   if(!confirm('Radera denna sal?'))return;
-  deleteStateItem('rooms',id);
-  queuePersistDelete('rooms',id);
-  if(selRoom===id)selRoom=null;
+  try{
+    await queuePersistDelete('rooms',id);
+    if(selRoom===id){
+      selRoom=null;
+      renderHome();
+    }
+    showToast('Sal borttagen.');
+  }catch(e){
+    console.error(e);
+    notifyError('Kunde inte radera salen.');
+  }
 }
 
 function renderClassList(){
@@ -888,22 +924,35 @@ function openClassModal(id){
   document.getElementById('class-students-in').value=cls?cls.students.join('\n'):'';
   openModal('class-modal');
 }
-function saveClass(){
+async function saveClass(){
   const name=document.getElementById('class-name-in').value.trim();
-  if(!name){alert('Ange ett namn');return}
+  if(!name){notifyError('Ange ett namn.');return}
   const students=document.getElementById('class-students-in').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  if(!students.length){alert('Lägg till minst en elev');return}
+  if(!students.length){notifyError('Lägg till minst en elev.');return}
   const existing=editingClassId?getClasses().find(c=>c.id===editingClassId):null;
   const entry=existing?{...existing,name,students}:{id:'cls_'+Date.now(),name,students};
-  upsertStateItem('classes',entry);
-  queuePersistUpsert('classes',entry);
-  closeModal('class-modal');
+  try{
+    await queuePersistUpsert('classes',entry);
+    closeModal('class-modal');
+    showToast('Klass sparad.');
+  }catch(e){
+    console.error(e);
+    notifyError('Kunde inte spara klassen.');
+  }
 }
-function deleteClass(id){
+async function deleteClass(id){
   if(!confirm('Radera klass?'))return;
-  deleteStateItem('classes',id);
-  queuePersistDelete('classes',id);
-  if(selClass===id)selClass=null;
+  try{
+    await queuePersistDelete('classes',id);
+    if(selClass===id){
+      selClass=null;
+      renderHome();
+    }
+    showToast('Klass borttagen.');
+  }catch(e){
+    console.error(e);
+    notifyError('Kunde inte radera klassen.');
+  }
 }
 function changePw(){showToast('Lösenord hanteras via inloggningsdelen.')}
 function resetAll(){showToast('Global återställning är avstängd i serverläge.')}
@@ -1088,7 +1137,7 @@ function applyPresetLayout(){
   const rows=Math.max(1,Math.min(12,parseInt(document.getElementById('layout-rows').value,10)||1));
   const fitCount=document.getElementById('layout-fit-count').checked;
   if(!blocks.length){
-    alert('Ogiltigt mönster');
+    notifyError('Ogiltigt mönster.');
     return;
   }
 
@@ -1102,7 +1151,7 @@ function applyPresetLayout(){
   const {canvas,W,H}=getEditorCanvasSize();
   if(!canvas||!placeCount)return;
   if(colsPerRow*EDITOR_DW>W-8){
-    alert('Mönstret är för brett för arbetsytan. Välj färre kolumner.');
+    notifyError('Mönstret är för brett för arbetsytan. Välj färre kolumner.');
     return;
   }
 
@@ -1410,14 +1459,19 @@ function deleteSelected(){
 }
 
 // ─── SAVE ROOM ─────────────────────────────────
-function saveRoom(){
+async function saveRoom(){
   const name=document.getElementById('editor-room-name').value.trim();
-  if(!name){alert('Ange ett namn för salen');return}
+  if(!name){notifyError('Ange ett namn för salen.');return}
   const existing=editingRoomId?getRooms().find(r=>r.id===editingRoomId):null;
   const data=existing?{...existing,name,desks:editorDesks.map(d=>({...d}))}:{id:'room_'+Date.now(),name,desks:editorDesks.map(d=>({...d}))};
-  upsertStateItem('rooms',data);
-  queuePersistUpsert('rooms',data);
-  closeModal('editor-modal');
+  try{
+    await queuePersistUpsert('rooms',data);
+    closeModal('editor-modal');
+    showToast('Sal sparad.');
+  }catch(e){
+    console.error(e);
+    notifyError('Kunde inte spara salen.');
+  }
 }
 
 // ═══════════════ PDF EXPORT ═══════════════
@@ -1429,14 +1483,14 @@ function exportPDF(){
   btn.disabled=true;
   setTimeout(()=>{
     try{ buildPDF(); }
-    catch(e){ console.error(e); alert('Kunde inte generera PDF: '+e.message); }
+    catch(e){ console.error(e); notifyError('Kunde inte generera PDF: '+e.message); }
     finally{ btn.textContent=orig; btn.disabled=false; }
   },30);
 }
 
 function printDirect(){
   if(!shuffleResult?.pairs?.length){
-    alert('Ingen placering att skriva ut ännu.');
+    notifyError('Ingen placering att skriva ut ännu.');
     return;
   }
   const btn=document.getElementById('print-btn');
@@ -1633,9 +1687,35 @@ function fmtName(s){
 function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
 function escH(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
-function openModal(id){document.getElementById(id).classList.remove('hidden');document.body.style.overflow='hidden'}
-function closeModal(id){document.getElementById(id).classList.add('hidden');document.body.style.overflow=''}
+let modalReturnFocusEl=null;
+function openModal(id){
+  const overlay=document.getElementById(id);
+  if(!overlay)return;
+  modalReturnFocusEl=document.activeElement instanceof HTMLElement?document.activeElement:null;
+  overlay.classList.remove('hidden');
+  document.body.style.overflow='hidden';
+  const focusTarget=overlay.querySelector('input,select,textarea,button,[tabindex]:not([tabindex="-1"])');
+  if(focusTarget instanceof HTMLElement){
+    requestAnimationFrame(()=>focusTarget.focus());
+  }
+}
+function closeModal(id){
+  const overlay=document.getElementById(id);
+  if(!overlay)return;
+  overlay.classList.add('hidden');
+  const openOverlay=document.querySelector('.overlay:not(.hidden)');
+  if(!openOverlay)document.body.style.overflow='';
+  if(modalReturnFocusEl&&document.contains(modalReturnFocusEl)){
+    modalReturnFocusEl.focus();
+  }
+  modalReturnFocusEl=null;
+}
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)closeModal(o.id)}));
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  const openOverlay=document.querySelector('.overlay:not(.hidden)');
+  if(openOverlay&&openOverlay.id)closeModal(openOverlay.id);
+});
 
 // ═══════════════ THEME ═══════════════
 function setTheme(t){
@@ -1646,15 +1726,21 @@ function setTheme(t){
   });
 }
 function applyTheme(t){
-  const prefersDark=window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const prefersDark=colorSchemeQuery.matches;
   const dark = t==='dark' || (t==='auto' && prefersDark);
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
 }
 
 // listen for system preference changes when in auto mode
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{
-  if(DB.get('theme','auto')==='auto') applyTheme('auto');
-});
+if(typeof colorSchemeQuery.addEventListener==='function'){
+  colorSchemeQuery.addEventListener('change',()=>{
+    if(DB.get('theme','auto')==='auto') applyTheme('auto');
+  });
+}else if(typeof colorSchemeQuery.addListener==='function'){
+  colorSchemeQuery.addListener(()=>{
+    if(DB.get('theme','auto')==='auto') applyTheme('auto');
+  });
+}
 
 // ═══════════════ INIT ═══════════════
 async function refreshStateFromServer(){
@@ -1679,7 +1765,7 @@ async function initApp(){
     await refreshStateFromServer();
   }catch(e){
     console.error(e);
-    alert('Kunde inte ladda data från servern. Kontrollera inloggning och databasanslutning.');
+    notifyError('Kunde inte ladda data från servern. Kontrollera inloggning och databasanslutning.');
   }
   adminIn=isSiteAdmin;
   renderHome();

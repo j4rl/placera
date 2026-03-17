@@ -350,6 +350,16 @@ textarea:focus {
   border-color: var(--accent2)
 }
 
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
+}
+
 label {
   font-size: .75rem;
   color: var(--muted);
@@ -502,6 +512,8 @@ hr {
 }
 
 .pick-btn {
+  appearance: none;
+  display: block;
   width: 100%;
   padding: 16px 18px;
   background: var(--surface);
@@ -759,6 +771,11 @@ hr {
 .placement-item:hover {
   border-color: var(--accent);
   background: var(--surface3)
+}
+
+.placement-item:focus-visible {
+  border-color: var(--accent2);
+  box-shadow: 0 0 0 2px rgba(24, 120, 160, .2);
 }
 
 .placement-item .pi-main {
@@ -1190,6 +1207,16 @@ hr {
   100% {
     transform: translateY(100vh) rotate(720deg);
     opacity: 0
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
   }
 }
 

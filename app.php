@@ -28,22 +28,22 @@ $boot = [
 <header>
   <div class="logo">Klass<span>placering</span></div>
   <nav class="main-nav">
-    <button class="nav-btn active" onclick="showView('home')">Placera</button>
-    <button class="nav-btn" onclick="showView('saved')">Placeringar</button>
-    <button class="nav-btn" onclick="showView('admin')">Admin</button>
+    <button type="button" class="nav-btn active" onclick="showView('home')">Placera</button>
+    <button type="button" class="nav-btn" onclick="showView('saved')">Placeringar</button>
+    <button type="button" class="nav-btn" onclick="showView('admin')">Admin</button>
   </nav>
   <div class="header-right">
     <div class="user-pill" id="user-pill">
-      <button type="button" class="user-meta-btn" onclick="showView('profile')" title="Min profil">
+      <button type="button" class="user-meta-btn" onclick="showView('profile')" title="Min profil" aria-label="Öppna min profil">
         <span class="user-name" id="user-name-text"><?= htmlspecialchars((string)$user['full_name'], ENT_QUOTES, 'UTF-8') ?></span>
         <span class="user-role" id="user-role-text"><?= htmlspecialchars((string)$user['role'], ENT_QUOTES, 'UTF-8') ?></span>
       </button>
       <a class="btn btn-secondary btn-sm" href="logout.php">Logga ut</a>
     </div>
     <div class="theme-toggle" id="theme-toggle">
-      <button class="theme-opt" onclick="setTheme('light')" title="Ljust">☀️</button>
-      <button class="theme-opt" onclick="setTheme('auto')" title="Auto">⚙️</button>
-      <button class="theme-opt" onclick="setTheme('dark')" title="Mörkt">🌙</button>
+      <button type="button" class="theme-opt" onclick="setTheme('light')" title="Ljust" aria-label="Ljust tema">☀️</button>
+      <button type="button" class="theme-opt" onclick="setTheme('auto')" title="Auto" aria-label="Automatiskt tema">⚙️</button>
+      <button type="button" class="theme-opt" onclick="setTheme('dark')" title="Mörkt" aria-label="Mörkt tema">🌙</button>
     </div>
   </div>
 </header>
@@ -65,29 +65,29 @@ $boot = [
         <div id="room-sel"></div>
       </div>
     </div>
-    <button class="shuffle-btn" id="shuffle-btn" onclick="doShuffle()" disabled>⚡ Slumpa placeringar</button>
+    <button type="button" class="shuffle-btn" id="shuffle-btn" onclick="doShuffle()" disabled>⚡ Slumpa placeringar</button>
   </div>
 </div>
 
 <!-- RESULT -->
 <div class="view" id="result-view">
   <div class="flex gap3" style="align-items:center;margin-bottom:22px;flex-wrap:wrap">
-    <button class="btn btn-secondary" id="res-back-btn" onclick="goBackFromResult()">← Tillbaka</button>
+    <button type="button" class="btn btn-secondary" id="res-back-btn" onclick="goBackFromResult()">← Tillbaka</button>
     <div>
       <div class="section-title" style="font-size:1.5rem;margin-bottom:0" id="res-title"></div>
       <div class="muted" style="font-size:.78rem" id="res-sub"></div>
     </div>
     <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-secondary btn-sm" id="res-reshuffle-btn" onclick="doShuffle(true)">↺ Slumpa om</button>
-      <button class="btn btn-primary btn-sm" onclick="openSaveModal()">💾 Spara placering</button>
-      <button class="btn btn-secondary btn-sm" id="print-btn" onclick="printDirect()">🖨 Skriv ut direkt</button>
-      <button class="btn btn-secondary btn-sm" id="pdf-btn" onclick="exportPDF()">📄 Ladda ner PDF</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="res-reshuffle-btn" onclick="doShuffle(true)">↺ Slumpa om</button>
+      <button type="button" class="btn btn-primary btn-sm" onclick="openSaveModal()">💾 Spara placering</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="print-btn" onclick="printDirect()">🖨 Skriv ut direkt</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="pdf-btn" onclick="exportPDF()">📄 Ladda ner PDF</button>
     </div>
   </div>
   <div class="card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
       <div class="card-title" style="margin:0">Klassrumslayout</div>
-      <button class="btn btn-secondary btn-sm" id="edit-mode-btn" onclick="toggleEditMode()">✏️ Redigera placering</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="edit-mode-btn" onclick="toggleEditMode()">✏️ Redigera placering</button>
     </div>
     <div id="result-layout-print-block" style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:24px;overflow:auto">
       <div class="board-bar">Tavla / Whiteboard</div>
@@ -142,8 +142,8 @@ $boot = [
         <input type="password" id="profile-password2" autocomplete="new-password">
       </div>
       <div class="flex gap2" style="justify-content:flex-end;margin-top:12px">
-        <button class="btn btn-secondary" onclick="renderProfile()">Återställ</button>
-        <button class="btn btn-primary" onclick="saveProfile()">Spara profil</button>
+        <button type="button" class="btn btn-secondary" onclick="renderProfile()">Återställ</button>
+        <button type="button" class="btn btn-primary" onclick="saveProfile()">Spara profil</button>
       </div>
     </div>
   </div>
@@ -158,24 +158,24 @@ $boot = [
   <div id="admin-panel" style="display:none">
     <div class="flex gap4" style="align-items:center;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap">
       <div><div class="section-title">Administration</div></div>
-      <button class="btn btn-secondary" onclick="adminLogout()">Logga ut konto</button>
+      <button type="button" class="btn btn-secondary" onclick="adminLogout()">Logga ut konto</button>
     </div>
     <div class="atabs">
-      <button class="atab active" onclick="aTab('rooms')">Salar</button>
-      <button class="atab" onclick="aTab('classes')">Klasser</button>
-      <button class="atab" onclick="aTab('users')">Användare</button>
+      <button type="button" class="atab active" onclick="aTab('rooms')">Salar</button>
+      <button type="button" class="atab" onclick="aTab('classes')">Klasser</button>
+      <button type="button" class="atab" onclick="aTab('users')">Användare</button>
     </div>
     <div class="asec active" id="asec-rooms">
       <div class="flex gap3" style="align-items:center;justify-content:space-between;margin-bottom:14px">
         <span class="card-title" style="margin:0">Sparade salar</span>
-        <button class="btn btn-primary btn-sm" onclick="openEditor(null)">+ Ny sal</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openEditor(null)">+ Ny sal</button>
       </div>
       <div id="room-list"></div>
     </div>
     <div class="asec" id="asec-classes">
       <div class="flex gap3" style="align-items:center;justify-content:space-between;margin-bottom:14px">
         <span class="card-title" style="margin:0">Sparade klasser</span>
-        <button class="btn btn-primary btn-sm" onclick="openClassModal(null)">+ Ny klass</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openClassModal(null)">+ Ny klass</button>
       </div>
       <div id="class-list"></div>
     </div>
@@ -199,7 +199,7 @@ $boot = [
 <!-- ADMIN USER MODAL -->
 <div class="overlay hidden" id="admin-user-modal">
 <div class="modal" style="width:min(96vw,520px)">
-  <button class="modal-close" onclick="closeModal('admin-user-modal')">✕</button>
+  <button type="button" class="modal-close" onclick="closeModal('admin-user-modal')" aria-label="Stäng dialog">✕</button>
   <div class="modal-title">Redigera användare</div>
   <input type="hidden" id="admin-user-id">
   <div class="fg">
@@ -225,10 +225,10 @@ $boot = [
     <div class="fg" style="flex:1">
       <label>Status</label>
       <select id="admin-user-status">
-        <option value="pending">Pending</option>
-        <option value="approved">Approved</option>
-        <option value="disabled">Disabled</option>
-        <option value="rejected">Rejected</option>
+        <option value="pending">Väntande</option>
+        <option value="approved">Godkänd</option>
+        <option value="disabled">Inaktiverad</option>
+        <option value="rejected">Avslagen</option>
       </select>
     </div>
   </div>
@@ -243,8 +243,8 @@ $boot = [
     <input type="password" id="admin-user-password2" autocomplete="new-password">
   </div>
   <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
-    <button class="btn btn-secondary" onclick="closeModal('admin-user-modal')">Avbryt</button>
-    <button class="btn btn-primary" onclick="saveAdminUserEdit()">Spara användare</button>
+    <button type="button" class="btn btn-secondary" onclick="closeModal('admin-user-modal')">Avbryt</button>
+    <button type="button" class="btn btn-primary" onclick="saveAdminUserEdit()">Spara användare</button>
   </div>
 </div>
 </div>
@@ -252,7 +252,7 @@ $boot = [
 <!-- ROOM EDITOR MODAL -->
 <div class="overlay hidden" id="editor-modal">
 <div class="modal" style="width:min(97vw,1020px)">
-  <button class="modal-close" onclick="closeModal('editor-modal')">✕</button>
+  <button type="button" class="modal-close" onclick="closeModal('editor-modal')" aria-label="Stäng dialog">✕</button>
   <div class="modal-title" id="editor-title">Ny sal</div>
 
   <div style="display:grid;grid-template-columns:1fr auto;gap:12px;max-width:100%;margin-bottom:14px">
@@ -267,7 +267,7 @@ $boot = [
     <div class="editor-toolbar-group">
       <label class="editor-toolbar-label" for="desk-count-input">Antal bänkar:</label>
       <input type="number" id="desk-count-input" value="20" min="1" max="60" style="width:66px">
-      <button class="btn btn-secondary btn-sm" onclick="applyCount()">Tillämpa</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="applyCount()">Tillämpa</button>
     </div>
     <div class="editor-toolbar-sep"></div>
     <div class="editor-toolbar-group">
@@ -284,11 +284,11 @@ $boot = [
         <input type="checkbox" id="layout-fit-count" checked>
         Anpassa antal
       </label>
-      <button class="btn btn-secondary btn-sm" onclick="applyPresetLayout()">⬚ Skapa grundlayout</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="applyPresetLayout()">⬚ Skapa grundlayout</button>
     </div>
     <div class="editor-toolbar-sep"></div>
-    <button class="btn btn-secondary btn-sm" onclick="autoArrange()">⊞ Auto-arrangera</button>
-    <button class="btn btn-secondary btn-sm" onclick="clearCanvas()">⊡ Rensa canvas</button>
+    <button type="button" class="btn btn-secondary btn-sm" onclick="autoArrange()">⊞ Auto-arrangera</button>
+    <button type="button" class="btn btn-secondary btn-sm" onclick="clearCanvas()">⊡ Rensa canvas</button>
     <span class="hint editor-toolbar-hint">Dra bänkar från poolen till canvasen • Klicka för att markera • Rotera med ↻</span>
   </div>
 
@@ -309,10 +309,10 @@ $boot = [
             <input type="range" id="rot-range" min="-180" max="180" step="5" value="0" oninput="applyRotation(this.value)" style="padding:0;height:28px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
               <span class="hint" style="margin:0" id="rot-val">0°</span>
-              <button class="btn btn-secondary btn-sm" onclick="applyRotation(0);document.getElementById('rot-range').value=0">Reset</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="applyRotation(0);document.getElementById('rot-range').value=0">Reset</button>
             </div>
           </div>
-          <button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="deleteSelected()">Flytta till pool</button>
+          <button type="button" class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="deleteSelected()">Flytta till pool</button>
         </div>
       </div>
     </div>
@@ -325,8 +325,8 @@ $boot = [
   </div>
 
   <div class="flex gap2" style="justify-content:flex-end;margin-top:16px">
-    <button class="btn btn-secondary" onclick="closeModal('editor-modal')">Avbryt</button>
-    <button class="btn btn-primary" onclick="saveRoom()">💾 Spara sal</button>
+    <button type="button" class="btn btn-secondary" onclick="closeModal('editor-modal')">Avbryt</button>
+    <button type="button" class="btn btn-primary" onclick="saveRoom()">💾 Spara sal</button>
   </div>
 </div>
 </div>
@@ -334,7 +334,7 @@ $boot = [
 <!-- CLASS MODAL -->
 <div class="overlay hidden" id="class-modal">
 <div class="modal" style="width:min(96vw,480px)">
-  <button class="modal-close" onclick="closeModal('class-modal')">✕</button>
+  <button type="button" class="modal-close" onclick="closeModal('class-modal')" aria-label="Stäng dialog">✕</button>
   <div class="modal-title" id="class-modal-title">Ny klass</div>
   <div class="fg"><label>Klassens namn</label><input type="text" id="class-name-in" placeholder="t.ex. 9B, NA22A…"></div>
   <div class="fg">
@@ -343,8 +343,8 @@ $boot = [
     <p class="hint">Klistra in en lista eller skriv ett namn per rad.</p>
   </div>
   <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
-    <button class="btn btn-secondary" onclick="closeModal('class-modal')">Avbryt</button>
-    <button class="btn btn-primary" onclick="saveClass()">Spara klass</button>
+    <button type="button" class="btn btn-secondary" onclick="closeModal('class-modal')">Avbryt</button>
+    <button type="button" class="btn btn-primary" onclick="saveClass()">Spara klass</button>
   </div>
 </div>
 </div>
@@ -352,7 +352,7 @@ $boot = [
 <!-- SAVE PLACEMENT MODAL -->
 <div class="overlay hidden" id="save-modal">
 <div class="modal" style="width:min(96vw,440px)">
-  <button class="modal-close" onclick="closeModal('save-modal')">✕</button>
+  <button type="button" class="modal-close" onclick="closeModal('save-modal')" aria-label="Stäng dialog">✕</button>
   <div class="modal-title">Spara placering</div>
   <div class="fg">
     <label>Namn på placering</label>
@@ -360,8 +360,8 @@ $boot = [
     <p class="hint">Lämna tomt för att använda datum och tid automatiskt.</p>
   </div>
   <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
-    <button class="btn btn-secondary" onclick="closeModal('save-modal')">Avbryt</button>
-    <button class="btn btn-primary" onclick="confirmSavePlacement()">💾 Spara</button>
+    <button type="button" class="btn btn-secondary" onclick="closeModal('save-modal')">Avbryt</button>
+    <button type="button" class="btn btn-primary" onclick="confirmSavePlacement()">💾 Spara</button>
   </div>
 </div>
 </div>
