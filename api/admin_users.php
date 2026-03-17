@@ -32,6 +32,35 @@ function plc_fetch_admin_users(mysqli $db): array
     return $rows;
 }
 
+function plc_fetch_admin_user(mysqli $db, int $userId): ?array
+{
+    $stmt = $db->prepare(
+        'SELECT u.id, u.username, u.full_name, u.email, u.role, u.status, u.created_at, u.approved_at,
+                a.full_name AS approved_by_name
+         FROM plc_users u
+         LEFT JOIN plc_users a ON a.id = u.approved_by_user_id
+         WHERE u.id = ?
+         LIMIT 1'
+    );
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    if (!$row) {
+        return null;
+    }
+    return [
+        'id' => (int)$row['id'],
+        'username' => $row['username'],
+        'fullName' => $row['full_name'],
+        'email' => $row['email'],
+        'role' => $row['role'],
+        'status' => $row['status'],
+        'createdAt' => $row['created_at'],
+        'approvedAt' => $row['approved_at'],
+        'approvedByName' => $row['approved_by_name'],
+    ];
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     plc_json(['ok' => true, 'users' => plc_fetch_admin_users($db)]);
 }
@@ -195,4 +224,9 @@ try {
     plc_json(['ok' => false, 'error' => 'update_failed'], 500);
 }
 
-plc_json(['ok' => true, 'users' => plc_fetch_admin_users($db)]);
+$updatedUser = plc_fetch_admin_user($db, $targetId);
+if (!$updatedUser) {
+    plc_json(['ok' => false, 'error' => 'invalid_user'], 400);
+}
+
+plc_json(['ok' => true, 'user' => $updatedUser]);

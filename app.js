@@ -8,6 +8,7 @@ let currentUser=APP_BOOT.user||null;
 let isSiteAdmin=(currentUser?.role||'')==='admin';
 let serverState={rooms:[],classes:[],saved:[]};
 let persistQueue=Promise.resolve();
+const STATE_KEYS=['rooms','classes','saved'];
 
 function cloneDeep(v){
   try{return structuredClone(v)}catch{return JSON.parse(JSON.stringify(v))}
@@ -28,21 +29,75 @@ async function apiRequest(url,opts={}){
   return data||{};
 }
 
-function queuePersist(key,val){
-  if(!['rooms','classes','saved'].includes(key))return;
-  const payload=cloneDeep(val);
+function renderStateKey(key){
+  if(key==='rooms'){renderHome();if(adminIn)renderRoomList();return;}
+  if(key==='classes'){renderHome();if(adminIn)renderClassList();return;}
+  if(key==='saved')renderSavedList();
+}
+
+function setStateCollection(key,items){
+  if(!STATE_KEYS.includes(key))return;
+  serverState[key]=Array.isArray(items)?cloneDeep(items):[];
+  renderStateKey(key);
+}
+
+function upsertStateItem(key,item){
+  if(!STATE_KEYS.includes(key)||!item?.id)return;
+  const items=Array.isArray(serverState[key])?[...serverState[key]]:[];
+  const nextItem=cloneDeep(item);
+  const idx=items.findIndex(entry=>entry.id===nextItem.id);
+  if(idx>=0)items[idx]=nextItem;
+  else items.unshift(nextItem);
+  serverState[key]=items;
+  renderStateKey(key);
+}
+
+function deleteStateItem(key,id){
+  if(!STATE_KEYS.includes(key)||!id)return;
+  const items=Array.isArray(serverState[key])?serverState[key]:[];
+  serverState[key]=items.filter(entry=>entry.id!==id);
+  renderStateKey(key);
+}
+
+function applyPersistResponse(key,res){
+  if(!res?.ok||res.key!==key)return;
+  if(Array.isArray(res.items)){
+    setStateCollection(key,res.items);
+    return;
+  }
+  if(res.item){
+    upsertStateItem(key,res.item);
+    return;
+  }
+  if(res.deletedId){
+    deleteStateItem(key,res.deletedId);
+  }
+}
+
+function queuePersist(payload){
+  if(!STATE_KEYS.includes(payload?.key))return Promise.resolve();
   persistQueue=persistQueue.then(async()=>{
-    const res=await apiRequest('api/state.php',{method:'POST',body:JSON.stringify({key,value:payload})});
-    if(res?.ok&&res.key===key&&Array.isArray(res.items)){
-      serverState[key]=res.items;
-      if(key==='rooms'){renderHome();if(adminIn)renderRoomList();}
-      if(key==='classes'){renderHome();if(adminIn)renderClassList();}
-      if(key==='saved')renderSavedList();
-    }
+    const res=await apiRequest('api/state.php',{method:'POST',body:JSON.stringify(payload)});
+    applyPersistResponse(payload.key,res);
+    return res;
   }).catch(err=>{
     console.error(err);
     showToast('Kunde inte spara till servern.');
+    throw err;
   });
+  return persistQueue;
+}
+
+function queuePersistReplace(key,val){
+  return queuePersist({key,action:'replace',value:cloneDeep(val)});
+}
+
+function queuePersistUpsert(key,item){
+  return queuePersist({key,action:'upsert',item:cloneDeep(item)});
+}
+
+function queuePersistDelete(key,id){
+  return queuePersist({key,action:'delete',id:String(id)});
 }
 
 const DB={
@@ -61,13 +116,23 @@ const DB={
       return;
     }
     serverState[k]=cloneDeep(v);
-    queuePersist(k,serverState[k]);
+    queuePersistReplace(k,serverState[k]);
   }
 };
 const getRooms=()=>DB.get('rooms',[]);
 const getClasses=()=>DB.get('classes',[]);
 const setRooms=r=>DB.set('rooms',r);
 const setClasses=c=>DB.set('classes',c);
+const setSaved=s=>DB.set('saved',s);
+
+function countPlacedDesks(room){
+  const desks=Array.isArray(room?.desks)?room.desks:[];
+  let total=0;
+  for(const desk of desks){
+    if(desk&&!desk.inPool)total++;
+  }
+  return total;
+}
 
 // ═══════════════ STATE ═══════════════
 let selClass=null,selRoom=null;
@@ -113,13 +178,14 @@ function renderHome(){
   const rooms=getRooms(),classes=getClasses();
   const cs=document.getElementById('class-sel');
   const rs=document.getElementById('room-sel');
+  const selectedRoom=rooms.find(r=>r.id===selRoom)||null;
   cs.innerHTML=classes.length
     ?classes.map(c=>`<div class="pick-btn ${selClass===c.id?'sel':''}" onclick="pickC('${c.id}')">${escH(c.name)}<div class="sub">${c.students.length} elever</div></div>`).join('')
     :`<div class="empty"><div class="ico">👥</div><p>Inga klasser tillagda</p></div>`;
   rs.innerHTML=rooms.length
-    ?rooms.map(r=>`<div class="pick-btn ${selRoom===r.id?'sel':''}" onclick="pickR('${r.id}')">${escH(r.name)}<div class="sub">${r.desks.filter(d=>!d.inPool).length} bänkar</div></div>`).join('')
+    ?rooms.map(r=>`<div class="pick-btn ${selRoom===r.id?'sel':''}" onclick="pickR('${r.id}')">${escH(r.name)}<div class="sub">${countPlacedDesks(r)} bänkar</div></div>`).join('')
     :`<div class="empty"><div class="ico">🏫</div><p>Inga salar tillagda</p></div>`;
-  document.getElementById('shuffle-btn').disabled=!(selClass&&selRoom);
+  document.getElementById('shuffle-btn').disabled=!(selClass&&selRoom&&selectedRoom?.desks?.some(d=>!d.inPool));
 }
 function pickC(id){selClass=id;renderHome()}
 function pickR(id){selRoom=id;renderHome()}
@@ -133,6 +199,10 @@ function doShuffle(useResultSelection=false){
   const cls=getClasses().find(c=>c.id===clsId);
   if(!room||!cls)return;
   const placed=room.desks.filter(d=>!d.inPool);
+  if(!placed.length){
+    showToast('Vald sal har inga placerade bänkar ännu.');
+    return;
+  }
   const students=[...cls.students];
   fisher(students);
   const pairs=placed.map((d,i)=>({desk:d,student:students[i]||null}));
@@ -164,6 +234,16 @@ function renderResult(fromSaved){
   document.getElementById('res-reshuffle-btn').style.display=canReshuffle?'':'none';
 
   const canvas=document.getElementById('result-canvas');
+  if(!pairs.length){
+    canvas.style.width='100%';
+    canvas.style.height='180px';
+    canvas.innerHTML='<div class="empty" style="height:100%;display:grid;place-items:center"><div><div class="ico">🪑</div><p>Den här placeringen innehåller inga placerade bänkar.</p></div></div>';
+    renderResultList();
+    showView('result');
+    document.getElementById('result-view').classList.add('active');
+    document.getElementById('home-view').classList.remove('active');
+    return;
+  }
   const pad=24;
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   pairs.forEach(p=>{
@@ -371,7 +451,6 @@ function performSwap(idxA,idxB,canvas){
 
 // ═══════════════ SAVED PLACEMENTS ═══════════════
 function getSaved(){return DB.get('saved',[]);}
-function setSaved(s){DB.set('saved',s);}
 
 function openSaveModal(){
   if(!shuffleResult)return;
@@ -392,7 +471,6 @@ function confirmSavePlacement(){
   const autoName=`${cls.name||'Klass'} — ${room.name||'Sal'} (${now.toLocaleDateString('sv-SE',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})})`;
   const name=rawName||autoName;
 
-  const saved=getSaved();
   const entry={
     id:savedId||'pl_'+Date.now(),
     name,
@@ -407,16 +485,10 @@ function confirmSavePlacement(){
     }))
   };
 
-  if(savedId){
-    // overwrite existing
-    const idx=saved.findIndex(p=>p.id===savedId);
-    if(idx>=0){saved[idx]=entry}else{saved.unshift(entry)}
-  } else {
-    saved.unshift(entry);
-  }
   shuffleResult.savedId=entry.id;
   shuffleResult.savedName=name;
-  setSaved(saved);
+  upsertStateItem('saved',entry);
+  queuePersistUpsert('saved',entry);
   closeModal('save-modal');
   showToast('✓ Placering sparad!');
 }
@@ -438,7 +510,7 @@ function renderSavedList(){
   el.innerHTML=saved.map(p=>{
     const d=new Date(p.savedAt);
     const dateStr=d.toLocaleDateString('sv-SE',{weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
-    const count=p.pairs.filter(x=>x.student).length;
+    const count=Array.isArray(p.pairs)?p.pairs.reduce((sum,pair)=>sum+(pair?.student?1:0),0):0;
     const byMeta=p.createdByName?` · skapad av ${escH(p.createdByName)}`:'';
     const createdMeta=p.createdAt?` · ${escH(fmtMetaDate(p.createdAt))}`:'';
     return`<div class="placement-item" id="pi_${p.id}" onclick="openSavedPlacement('${p.id}')">
@@ -495,8 +567,8 @@ function cancelDelete(id){
   document.getElementById('dc_'+id)?.classList.add('hidden');
 }
 function deleteSaved(id){
-  setSaved(getSaved().filter(p=>p.id!==id));
-  renderSavedList();
+  deleteStateItem('saved',id);
+  queuePersistDelete('saved',id);
 }
 
 // ═══════════════ PROFILE ═══════════════
@@ -604,11 +676,29 @@ async function loadAdminUsers(){
   if(!isSiteAdmin)return;
   try{
     const data=await apiRequest('api/admin_users.php');
-    adminUsersCache=Array.isArray(data?.users)?data.users:[];
+    adminUsersCache=sortAdminUsers(Array.isArray(data?.users)?data.users:[]);
   }catch(e){
     console.error(e);
     showToast('Kunde inte hämta användaransökningar.');
   }
+}
+
+function sortAdminUsers(users){
+  const rank={pending:0,approved:1,disabled:2,rejected:3};
+  return [...users].sort((a,b)=>{
+    const rankDiff=(rank[a?.status]??99)-(rank[b?.status]??99);
+    if(rankDiff!==0)return rankDiff;
+    return String(a?.createdAt||'').localeCompare(String(b?.createdAt||''));
+  });
+}
+
+function upsertAdminUserCache(user){
+  if(!user?.id)return;
+  const next=[...adminUsersCache];
+  const idx=next.findIndex(entry=>Number(entry.id)===Number(user.id));
+  if(idx>=0)next[idx]=user;
+  else next.push(user);
+  adminUsersCache=sortAdminUsers(next);
 }
 
 async function loadTeacherDirectory(){
@@ -624,7 +714,7 @@ async function loadTeacherDirectory(){
 async function adminUserAction(action,userId,role='teacher'){
   try{
     const data=await apiRequest('api/admin_users.php',{method:'POST',body:JSON.stringify({action,userId,role})});
-    adminUsersCache=Array.isArray(data?.users)?data.users:[];
+    if(data?.user)upsertAdminUserCache(data.user);
     renderAdminUsersSection();
   }catch(e){
     console.error(e);
@@ -675,8 +765,8 @@ async function saveAdminUserEdit(){
       method:'POST',
       body:JSON.stringify({action:'update_user',userId,username,fullName,email,role,status,password,password2})
     });
-    adminUsersCache=Array.isArray(data?.users)?data.users:[];
-    const updated=findAdminUserById(userId);
+    if(data?.user)upsertAdminUserCache(data.user);
+    const updated=data?.user||findAdminUserById(userId);
     if(updated&&Number(currentUser?.id)===userId){
       currentUser={...currentUser,username:updated.username,fullName:updated.fullName,email:updated.email,role:updated.role};
       isSiteAdmin=(currentUser?.role||'')==='admin';
@@ -763,18 +853,21 @@ function renderAdminUsersSection(){
 function renderRoomList(){
   const rooms=getRooms(),el=document.getElementById('room-list');
   if(!rooms.length){el.innerHTML=`<div class="empty"><div class="ico">🏫</div><p>Inga salar</p></div>`;return}
-  el.innerHTML=rooms.map(r=>`<div class="list-item">
-    <div><div class="li-name">${escH(r.name)}</div><div class="li-sub">${r.desks.filter(d=>!d.inPool).length} bänkar placerade${r.createdByName?` · skapad av ${escH(r.createdByName)}`:''}${r.createdAt?` · ${escH(fmtMetaDate(r.createdAt))}`:''}</div></div>
+  el.innerHTML=rooms.map(r=>{
+    const deskCount=countPlacedDesks(r);
+    return`<div class="list-item">
+    <div><div class="li-name">${escH(r.name)}</div><div class="li-sub">${deskCount} bänkar placerade${r.createdByName?` · skapad av ${escH(r.createdByName)}`:''}${r.createdAt?` · ${escH(fmtMetaDate(r.createdAt))}`:''}</div></div>
     <div class="flex gap2">
       <button class="btn btn-secondary btn-sm" onclick="openEditor('${r.id}')">Redigera</button>
       <button class="btn btn-danger btn-sm" onclick="deleteRoom('${r.id}')">✕</button>
-    </div></div>`).join('');
+    </div></div>`;
+  }).join('');
 }
 function deleteRoom(id){
   if(!confirm('Radera denna sal?'))return;
-  setRooms(getRooms().filter(r=>r.id!==id));
+  deleteStateItem('rooms',id);
+  queuePersistDelete('rooms',id);
   if(selRoom===id)selRoom=null;
-  renderRoomList();
 }
 
 function renderClassList(){
@@ -800,15 +893,17 @@ function saveClass(){
   if(!name){alert('Ange ett namn');return}
   const students=document.getElementById('class-students-in').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(!students.length){alert('Lägg till minst en elev');return}
-  const classes=getClasses();
-  if(editingClassId){const i=classes.findIndex(c=>c.id===editingClassId);if(i>=0)classes[i]={...classes[i],name,students}}
-  else classes.push({id:'cls_'+Date.now(),name,students});
-  setClasses(classes);closeModal('class-modal');renderClassList();
+  const existing=editingClassId?getClasses().find(c=>c.id===editingClassId):null;
+  const entry=existing?{...existing,name,students}:{id:'cls_'+Date.now(),name,students};
+  upsertStateItem('classes',entry);
+  queuePersistUpsert('classes',entry);
+  closeModal('class-modal');
 }
 function deleteClass(id){
   if(!confirm('Radera klass?'))return;
-  setClasses(getClasses().filter(c=>c.id!==id));
-  if(selClass===id)selClass=null;renderClassList();
+  deleteStateItem('classes',id);
+  queuePersistDelete('classes',id);
+  if(selClass===id)selClass=null;
 }
 function changePw(){showToast('Lösenord hanteras via inloggningsdelen.')}
 function resetAll(){showToast('Global återställning är avstängd i serverläge.')}
@@ -1318,11 +1413,11 @@ function deleteSelected(){
 function saveRoom(){
   const name=document.getElementById('editor-room-name').value.trim();
   if(!name){alert('Ange ett namn för salen');return}
-  const rooms=getRooms();
-  const data={id:editingRoomId||'room_'+Date.now(),name,desks:editorDesks.map(d=>({...d}))};
-  if(editingRoomId){const i=rooms.findIndex(r=>r.id===editingRoomId);if(i>=0)rooms[i]=data;else rooms.push(data)}
-  else rooms.push(data);
-  setRooms(rooms);closeModal('editor-modal');renderRoomList();
+  const existing=editingRoomId?getRooms().find(r=>r.id===editingRoomId):null;
+  const data=existing?{...existing,name,desks:editorDesks.map(d=>({...d}))}:{id:'room_'+Date.now(),name,desks:editorDesks.map(d=>({...d}))};
+  upsertStateItem('rooms',data);
+  queuePersistUpsert('rooms',data);
+  closeModal('editor-modal');
 }
 
 // ═══════════════ PDF EXPORT ═══════════════

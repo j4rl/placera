@@ -46,3 +46,14 @@ Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare
 ### 2026-03-17 18:05
 
 - Ändring: Revertade automatisk git-hook för README för att undvika loopar. Uppdateringar i README görs manuellt framöver.
+
+### 2026-03-17
+
+- Ändring: Lade till skydd mot slumpning av salar utan placerade bänkar och defensiv visning för tomma placeringar.
+- Ändring: Säkrade hantering av sparade tidsstämplar i state-API för att undvika felaktiga 1970-datum vid ogiltig input.
+
+### 2026-03-17
+
+- Ändring: Optimerade state-API och klienten till att spara enstaka salar, klasser och placeringar via upsert/delete i stället för att skicka hela listor varje gång.
+- Ändring: Optimerade adminhantering så att klienten uppdaterar en användare i cachen efter ändring i stället för att ladda om hela användarlistan.
+- Ändring: Minskat onödiga omräkningar i vissa listvyer genom att återanvända beräknade bänk- och placeringsvärden.
