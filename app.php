@@ -78,7 +78,7 @@ $boot = [
       <div class="muted" style="font-size:.78rem" id="res-sub"></div>
     </div>
     <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-secondary btn-sm" id="res-reshuffle-btn" onclick="doShuffle()">↺ Slumpa om</button>
+      <button class="btn btn-secondary btn-sm" id="res-reshuffle-btn" onclick="doShuffle(true)">↺ Slumpa om</button>
       <button class="btn btn-primary btn-sm" onclick="openSaveModal()">💾 Spara placering</button>
       <button class="btn btn-secondary btn-sm" id="print-btn" onclick="printDirect()">🖨 Skriv ut direkt</button>
       <button class="btn btn-secondary btn-sm" id="pdf-btn" onclick="exportPDF()">📄 Ladda ner PDF</button>

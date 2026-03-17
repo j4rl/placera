@@ -125,10 +125,10 @@ function pickC(id){selClass=id;renderHome()}
 function pickR(id){selRoom=id;renderHome()}
 
 // ═══════════════ SHUFFLE ═══════════════
-function doShuffle(){
-  // If called from result view with a valid room+class in shuffleResult, re-use those
-  const roomId=shuffleResult?.room?.id||selRoom;
-  const clsId=shuffleResult?.cls?.id||selClass;
+function doShuffle(useResultSelection=false){
+  // Home shuffle should always use current picks. Result "reshuffle" can opt in to current result ids.
+  const roomId=useResultSelection?(shuffleResult?.room?.id||selRoom):selRoom;
+  const clsId=useResultSelection?(shuffleResult?.cls?.id||selClass):selClass;
   const room=getRooms().find(r=>r.id===roomId);
   const cls=getClasses().find(c=>c.id===clsId);
   if(!room||!cls)return;
