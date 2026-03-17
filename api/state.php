@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/crypto.php';
 
 $user = plc_require_login(true);
 $db = plc_db();
@@ -101,7 +102,7 @@ function plc_fetch_classes(mysqli $db, int $ownerUserId): array
         $out[] = [
             'id' => $row['public_id'],
             'name' => $row['name'],
-            'students' => plc_decode_json_array($row['students_json']),
+            'students' => plc_decrypt_student_list(plc_decode_json_array($row['students_json'])),
             'createdByName' => $row['created_by_name'],
             'createdAt' => $row['created_at'],
             'updatedByName' => $row['updated_by_name'],
@@ -131,7 +132,7 @@ function plc_fetch_class_by_public_id(mysqli $db, int $ownerUserId, string $publ
     return [
         'id' => $row['public_id'],
         'name' => $row['name'],
-        'students' => plc_decode_json_array($row['students_json']),
+        'students' => plc_decrypt_student_list(plc_decode_json_array($row['students_json'])),
         'createdByName' => $row['created_by_name'],
         'createdAt' => $row['created_at'],
         'updatedByName' => $row['updated_by_name'],
@@ -164,7 +165,7 @@ function plc_fetch_saved(mysqli $db, int $ownerUserId): array
             'className' => $row['class_name'],
             'roomId' => $row['room_public_id'],
             'classId' => $row['class_public_id'],
-            'pairs' => plc_decode_json_array($row['pairs_json']),
+            'pairs' => plc_decrypt_pairs(plc_decode_json_array($row['pairs_json'])),
             'savedAt' => $savedAt,
             'createdByName' => $row['created_by_name'],
             'createdAt' => $row['created_at'],
@@ -201,7 +202,7 @@ function plc_fetch_saved_by_public_id(mysqli $db, int $ownerUserId, string $publ
         'className' => $row['class_name'],
         'roomId' => $row['room_public_id'],
         'classId' => $row['class_public_id'],
-        'pairs' => plc_decode_json_array($row['pairs_json']),
+        'pairs' => plc_decrypt_pairs(plc_decode_json_array($row['pairs_json'])),
         'savedAt' => $savedAt,
         'createdByName' => $row['created_by_name'],
         'createdAt' => $row['created_at'],
@@ -270,6 +271,7 @@ function plc_upsert_class(mysqli $db, int $ownerUserId, int $actorUserId, array 
     if (!is_array($students)) {
         $students = [];
     }
+    $students = plc_encrypt_student_list($students);
     $studentsJson = json_encode($students, JSON_UNESCAPED_UNICODE);
     if ($studentsJson === false) {
         $studentsJson = '[]';
@@ -326,6 +328,7 @@ function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, array 
     if (!is_array($pairs)) {
         $pairs = [];
     }
+    $pairs = plc_encrypt_pairs($pairs);
     $pairsJson = json_encode($pairs, JSON_UNESCAPED_UNICODE);
     if ($pairsJson === false) {
         $pairsJson = '[]';
@@ -488,6 +491,7 @@ function plc_sync_classes(mysqli $db, int $ownerUserId, int $actorUserId, array 
         if (!is_array($students)) {
             $students = [];
         }
+        $students = plc_encrypt_student_list($students);
         $studentsJson = json_encode($students, JSON_UNESCAPED_UNICODE);
         if ($studentsJson === false) {
             $studentsJson = '[]';
@@ -559,6 +563,7 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, array $i
         if (!is_array($pairs)) {
             $pairs = [];
         }
+        $pairs = plc_encrypt_pairs($pairs);
         $pairsJson = json_encode($pairs, JSON_UNESCAPED_UNICODE);
         if ($pairsJson === false) {
             $pairsJson = '[]';
@@ -609,20 +614,24 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, array $i
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $payload = [
-        'ok' => true,
-        'user' => [
-            'id' => (int)$user['id'],
-            'username' => $user['username'],
-            'fullName' => $user['full_name'],
-            'email' => $user['email'],
-            'role' => $user['role'],
-        ],
-        'rooms' => plc_fetch_rooms($db, $ownerUserId),
-        'classes' => plc_fetch_classes($db, $ownerUserId),
-        'saved' => plc_fetch_saved($db, $ownerUserId),
-    ];
-    plc_json($payload);
+    try {
+        $payload = [
+            'ok' => true,
+            'user' => [
+                'id' => (int)$user['id'],
+                'username' => $user['username'],
+                'fullName' => $user['full_name'],
+                'email' => $user['email'],
+                'role' => $user['role'],
+            ],
+            'rooms' => plc_fetch_rooms($db, $ownerUserId),
+            'classes' => plc_fetch_classes($db, $ownerUserId),
+            'saved' => plc_fetch_saved($db, $ownerUserId),
+        ];
+        plc_json($payload);
+    } catch (Throwable $e) {
+        plc_json(['ok' => false, 'error' => 'state_read_failed'], 500);
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

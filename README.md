@@ -24,7 +24,21 @@ Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare
 - Godkända användare kan logga in och använda verktyget.
 - Systemet sparar vem som skapat eller uppdaterat salar och placeringar, samt när det gjordes.
 
+## Konfiguration (kryptering av elevnamn)
+
+- Sätt en stark nyckel i miljövariabeln `PLC_DATA_KEY` (minst 32 tecken rekommenderas).
+- Nya och uppdaterade elevnamn i klasser och sparade placeringar krypteras i databasen.
+- För att kryptera befintlig data, kör migreringen:
+  - `C:\xampp\php\php.exe scripts\migrate_encrypt_student_data.php`
+
 ## Uppdateringar
+
+### 2026-03-17 19:03
+
+- Ändring: Lade till kryptering-at-rest för elevnamn i klasser och sparade placeringar via `includes/crypto.php`.
+- Ändring: State-API dekrypterar namn vid läsning och krypterar vid skrivning så klienten fortsatt får samma dataformat.
+- Ändring: Lade till migreringsskript för att kryptera befintliga namn i databasen (`scripts/migrate_encrypt_student_data.php`).
+- Ändring: Lade till konfigurationskrav för `PLC_DATA_KEY`.
 
 ### 2026-03-17 18:57
 
