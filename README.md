@@ -25,6 +25,12 @@ Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare
 - Systemet sparar vem som skapat eller uppdaterat salar och placeringar, samt när det gjordes.
 - Elevnamn i klasser och sparade placeringar krypteras i databasen.
 
+## Vem som har utvecklat appen
+Appen är utvecklad av Charlie Jarl för att underlätta klassrumsplacering. 
+Då andra alternativ kräver prenumeration eller andra avgifter är denna gjord för att vara helt gratis.
+Bra och hjälpsamma appar kan vara gratis.
+Koden är öppen källkod och finns tillgänglig på GitHub.
+
 ---
 
 ## Uppdateringar
