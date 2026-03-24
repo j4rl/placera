@@ -53,6 +53,45 @@ function plc_decode_json_array(?string $raw): array
     return is_array($val) ? $val : [];
 }
 
+function plc_ensure_entity_visibility_columns(mysqli $db): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+
+    $roomHasVisibility = false;
+    $classHasVisibility = false;
+
+    try {
+        $res = $db->query("SHOW COLUMNS FROM plc_rooms LIKE 'visibility'");
+        $roomHasVisibility = $res instanceof mysqli_result && $res->num_rows > 0;
+    } catch (Throwable $e) {
+        $roomHasVisibility = false;
+    }
+    if (!$roomHasVisibility) {
+        $db->query(
+            "ALTER TABLE plc_rooms
+             ADD COLUMN visibility ENUM('shared','private') NOT NULL DEFAULT 'shared' AFTER desks_json"
+        );
+    }
+
+    try {
+        $res = $db->query("SHOW COLUMNS FROM plc_classes LIKE 'visibility'");
+        $classHasVisibility = $res instanceof mysqli_result && $res->num_rows > 0;
+    } catch (Throwable $e) {
+        $classHasVisibility = false;
+    }
+    if (!$classHasVisibility) {
+        $db->query(
+            "ALTER TABLE plc_classes
+             ADD COLUMN visibility ENUM('shared','private') NOT NULL DEFAULT 'shared' AFTER students_json"
+        );
+    }
+
+    $done = true;
+}
+
 function plc_teacher_selection_table_exists(mysqli $db): bool
 {
     static $cached = null;
@@ -142,7 +181,7 @@ function plc_fetch_teacher_selected_ids_for_saved(mysqli $db, int $teacherUserId
 function plc_fetch_rooms(mysqli $db, int $actorUserId, array $roomUsageById = []): array
 {
     $stmt = $db->prepare(
-        'SELECT r.owner_user_id, r.public_id, r.name, r.desks_json, r.created_at, r.updated_at,
+        'SELECT r.owner_user_id, r.public_id, r.name, r.desks_json, r.visibility, r.created_at, r.updated_at,
                 ou.full_name AS owner_name,
                 cu.full_name AS created_by_name, uu.full_name AS updated_by_name
          FROM plc_rooms r
@@ -150,19 +189,25 @@ function plc_fetch_rooms(mysqli $db, int $actorUserId, array $roomUsageById = []
          JOIN plc_users cu ON cu.id = r.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = r.updated_by_user_id
          WHERE ou.status = \'approved\'
+           AND (r.owner_user_id = ? OR r.visibility = \'shared\')
          ORDER BY r.created_at DESC'
     );
+    $stmt->bind_param('i', $actorUserId);
     $stmt->execute();
     $res = $stmt->get_result();
     $out = [];
     while ($row = $res->fetch_assoc()) {
         $entityOwnerUserId = (int)$row['owner_user_id'];
+        $visibility = (string)$row['visibility'] === 'private' ? 'private' : 'shared';
         $out[] = [
             'id' => $row['public_id'],
             'ownerUserId' => $entityOwnerUserId,
             'ownerName' => $row['owner_name'],
             'editable' => plc_is_entity_editable($actorUserId, $entityOwnerUserId),
-            'usedByOthersCount' => (int)($roomUsageById[(string)$row['public_id']] ?? 0),
+            'usedByOthersCount' => $visibility === 'shared'
+                ? (int)($roomUsageById[(string)$row['public_id']] ?? 0)
+                : 0,
+            'visibility' => $visibility,
             'name' => $row['name'],
             'desks' => plc_decode_json_array($row['desks_json']),
             'createdByName' => $row['created_by_name'],
@@ -177,7 +222,7 @@ function plc_fetch_rooms(mysqli $db, int $actorUserId, array $roomUsageById = []
 function plc_fetch_room_by_public_id(mysqli $db, int $actorUserId, int $entityOwnerUserId, string $publicId): ?array
 {
     $stmt = $db->prepare(
-        'SELECT r.owner_user_id, r.public_id, r.name, r.desks_json, r.created_at, r.updated_at,
+        'SELECT r.owner_user_id, r.public_id, r.name, r.desks_json, r.visibility, r.created_at, r.updated_at,
                 ou.full_name AS owner_name,
                 cu.full_name AS created_by_name, uu.full_name AS updated_by_name
          FROM plc_rooms r
@@ -195,12 +240,16 @@ function plc_fetch_room_by_public_id(mysqli $db, int $actorUserId, int $entityOw
     }
     $usageCounts = plc_fetch_external_usage_counts($db, $actorUserId);
     $resolvedOwnerUserId = (int)$row['owner_user_id'];
+    $visibility = (string)$row['visibility'] === 'private' ? 'private' : 'shared';
     return [
         'id' => $row['public_id'],
         'ownerUserId' => $resolvedOwnerUserId,
         'ownerName' => $row['owner_name'],
         'editable' => plc_is_entity_editable($actorUserId, $resolvedOwnerUserId),
-        'usedByOthersCount' => (int)($usageCounts['room'][(string)$row['public_id']] ?? 0),
+        'usedByOthersCount' => $visibility === 'shared'
+            ? (int)($usageCounts['room'][(string)$row['public_id']] ?? 0)
+            : 0,
+        'visibility' => $visibility,
         'name' => $row['name'],
         'desks' => plc_decode_json_array($row['desks_json']),
         'createdByName' => $row['created_by_name'],
@@ -213,7 +262,7 @@ function plc_fetch_room_by_public_id(mysqli $db, int $actorUserId, int $entityOw
 function plc_fetch_classes(mysqli $db, int $actorUserId, array $classUsageById = []): array
 {
     $stmt = $db->prepare(
-        'SELECT c.owner_user_id, c.public_id, c.name, c.students_json, c.created_at, c.updated_at,
+        'SELECT c.owner_user_id, c.public_id, c.name, c.students_json, c.visibility, c.created_at, c.updated_at,
                 ou.full_name AS owner_name,
                 cu.full_name AS created_by_name, uu.full_name AS updated_by_name
          FROM plc_classes c
@@ -221,19 +270,25 @@ function plc_fetch_classes(mysqli $db, int $actorUserId, array $classUsageById =
          JOIN plc_users cu ON cu.id = c.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = c.updated_by_user_id
          WHERE ou.status = \'approved\'
+           AND (c.owner_user_id = ? OR c.visibility = \'shared\')
          ORDER BY c.created_at DESC'
     );
+    $stmt->bind_param('i', $actorUserId);
     $stmt->execute();
     $res = $stmt->get_result();
     $out = [];
     while ($row = $res->fetch_assoc()) {
         $entityOwnerUserId = (int)$row['owner_user_id'];
+        $visibility = (string)$row['visibility'] === 'private' ? 'private' : 'shared';
         $out[] = [
             'id' => $row['public_id'],
             'ownerUserId' => $entityOwnerUserId,
             'ownerName' => $row['owner_name'],
             'editable' => plc_is_entity_editable($actorUserId, $entityOwnerUserId),
-            'usedByOthersCount' => (int)($classUsageById[(string)$row['public_id']] ?? 0),
+            'usedByOthersCount' => $visibility === 'shared'
+                ? (int)($classUsageById[(string)$row['public_id']] ?? 0)
+                : 0,
+            'visibility' => $visibility,
             'name' => $row['name'],
             'students' => plc_decrypt_student_list(plc_decode_json_array($row['students_json'])),
             'createdByName' => $row['created_by_name'],
@@ -248,7 +303,7 @@ function plc_fetch_classes(mysqli $db, int $actorUserId, array $classUsageById =
 function plc_fetch_class_by_public_id(mysqli $db, int $actorUserId, int $entityOwnerUserId, string $publicId): ?array
 {
     $stmt = $db->prepare(
-        'SELECT c.owner_user_id, c.public_id, c.name, c.students_json, c.created_at, c.updated_at,
+        'SELECT c.owner_user_id, c.public_id, c.name, c.students_json, c.visibility, c.created_at, c.updated_at,
                 ou.full_name AS owner_name,
                 cu.full_name AS created_by_name, uu.full_name AS updated_by_name
          FROM plc_classes c
@@ -266,12 +321,16 @@ function plc_fetch_class_by_public_id(mysqli $db, int $actorUserId, int $entityO
     }
     $usageCounts = plc_fetch_external_usage_counts($db, $actorUserId);
     $resolvedOwnerUserId = (int)$row['owner_user_id'];
+    $visibility = (string)$row['visibility'] === 'private' ? 'private' : 'shared';
     return [
         'id' => $row['public_id'],
         'ownerUserId' => $resolvedOwnerUserId,
         'ownerName' => $row['owner_name'],
         'editable' => plc_is_entity_editable($actorUserId, $resolvedOwnerUserId),
-        'usedByOthersCount' => (int)($usageCounts['class'][(string)$row['public_id']] ?? 0),
+        'usedByOthersCount' => $visibility === 'shared'
+            ? (int)($usageCounts['class'][(string)$row['public_id']] ?? 0)
+            : 0,
+        'visibility' => $visibility,
         'name' => $row['name'],
         'students' => plc_decrypt_student_list(plc_decode_json_array($row['students_json'])),
         'createdByName' => $row['created_by_name'],
@@ -304,7 +363,21 @@ function plc_fetch_saved(mysqli $db, int $actorUserId, string $actorRole): array
                     AND p.room_public_id IS NOT NULL AND p.room_public_id <> ''
                     AND p.class_public_id IS NOT NULL AND p.class_public_id <> ''
                     AND p.room_public_id IN ({$roomIn})
-                    AND p.class_public_id IN ({$classIn}))";
+                    AND p.class_public_id IN ({$classIn})
+                    AND EXISTS (
+                        SELECT 1
+                        FROM plc_rooms rs
+                        WHERE rs.owner_user_id = p.owner_user_id
+                          AND rs.public_id = p.room_public_id
+                          AND rs.visibility = 'shared'
+                    )
+                    AND EXISTS (
+                        SELECT 1
+                        FROM plc_classes cs
+                        WHERE cs.owner_user_id = p.owner_user_id
+                          AND cs.public_id = p.class_public_id
+                          AND cs.visibility = 'shared'
+                    ))";
             }
         }
     }
@@ -391,6 +464,7 @@ function plc_upsert_room(mysqli $db, int $actorUserId, array $item): ?array
     if ($name === '') {
         return null;
     }
+    $visibility = (string)($item['visibility'] ?? '') === 'private' ? 'private' : 'shared';
     $rawPublicId = is_string($item['id'] ?? null) ? trim((string)$item['id']) : '';
     $publicId = plc_safe_public_id($rawPublicId !== '' ? $rawPublicId : null, 'room');
     $desks = $item['desks'] ?? [];
@@ -410,10 +484,10 @@ function plc_upsert_room(mysqli $db, int $actorUserId, array $item): ?array
     if ($exists) {
         $stmt = $db->prepare(
             'UPDATE plc_rooms
-             SET name = ?, desks_json = ?, updated_by_user_id = ?, updated_at = NOW()
+             SET name = ?, desks_json = ?, visibility = ?, updated_by_user_id = ?, updated_at = NOW()
              WHERE owner_user_id = ? AND public_id = ?'
         );
-        $stmt->bind_param('ssiis', $name, $desksJson, $actorUserId, $actorUserId, $publicId);
+        $stmt->bind_param('sssiis', $name, $desksJson, $visibility, $actorUserId, $actorUserId, $publicId);
         $stmt->execute();
     } else {
         if (
@@ -423,10 +497,11 @@ function plc_upsert_room(mysqli $db, int $actorUserId, array $item): ?array
             throw new RuntimeException('forbidden');
         }
         $stmt = $db->prepare(
-            'INSERT INTO plc_rooms (public_id, owner_user_id, name, desks_json, created_by_user_id, updated_by_user_id)
-             VALUES (?, ?, ?, ?, ?, NULL)'
+            'INSERT INTO plc_rooms (
+                public_id, owner_user_id, name, desks_json, visibility, created_by_user_id, updated_by_user_id
+             ) VALUES (?, ?, ?, ?, ?, ?, NULL)'
         );
-        $stmt->bind_param('sissi', $publicId, $actorUserId, $name, $desksJson, $actorUserId);
+        $stmt->bind_param('sisssi', $publicId, $actorUserId, $name, $desksJson, $visibility, $actorUserId);
         $stmt->execute();
     }
 
@@ -455,6 +530,7 @@ function plc_upsert_class(mysqli $db, int $actorUserId, array $item): ?array
     if ($name === '') {
         return null;
     }
+    $visibility = (string)($item['visibility'] ?? '') === 'private' ? 'private' : 'shared';
     $rawPublicId = is_string($item['id'] ?? null) ? trim((string)$item['id']) : '';
     $publicId = plc_safe_public_id($rawPublicId !== '' ? $rawPublicId : null, 'cls');
     $students = $item['students'] ?? [];
@@ -475,10 +551,10 @@ function plc_upsert_class(mysqli $db, int $actorUserId, array $item): ?array
     if ($exists) {
         $stmt = $db->prepare(
             'UPDATE plc_classes
-             SET name = ?, students_json = ?, updated_by_user_id = ?, updated_at = NOW()
+             SET name = ?, students_json = ?, visibility = ?, updated_by_user_id = ?, updated_at = NOW()
              WHERE owner_user_id = ? AND public_id = ?'
         );
-        $stmt->bind_param('ssiis', $name, $studentsJson, $actorUserId, $actorUserId, $publicId);
+        $stmt->bind_param('sssiis', $name, $studentsJson, $visibility, $actorUserId, $actorUserId, $publicId);
         $stmt->execute();
     } else {
         if (
@@ -488,10 +564,11 @@ function plc_upsert_class(mysqli $db, int $actorUserId, array $item): ?array
             throw new RuntimeException('forbidden');
         }
         $stmt = $db->prepare(
-            'INSERT INTO plc_classes (public_id, owner_user_id, name, students_json, created_by_user_id, updated_by_user_id)
-             VALUES (?, ?, ?, ?, ?, NULL)'
+            'INSERT INTO plc_classes (
+                public_id, owner_user_id, name, students_json, visibility, created_by_user_id, updated_by_user_id
+             ) VALUES (?, ?, ?, ?, ?, ?, NULL)'
         );
-        $stmt->bind_param('sissi', $publicId, $actorUserId, $name, $studentsJson, $actorUserId);
+        $stmt->bind_param('sisssi', $publicId, $actorUserId, $name, $studentsJson, $visibility, $actorUserId);
         $stmt->execute();
     }
 
@@ -626,12 +703,13 @@ function plc_sync_rooms(mysqli $db, int $ownerUserId, int $actorUserId, array $i
 
     $seen = [];
     $ins = $db->prepare(
-        'INSERT INTO plc_rooms (public_id, owner_user_id, name, desks_json, created_by_user_id, updated_by_user_id)
-         VALUES (?, ?, ?, ?, ?, NULL)'
+        'INSERT INTO plc_rooms (
+            public_id, owner_user_id, name, desks_json, visibility, created_by_user_id, updated_by_user_id
+         ) VALUES (?, ?, ?, ?, ?, ?, NULL)'
     );
     $upd = $db->prepare(
         'UPDATE plc_rooms
-         SET name = ?, desks_json = ?, updated_by_user_id = ?, updated_at = NOW()
+         SET name = ?, desks_json = ?, visibility = ?, updated_by_user_id = ?, updated_at = NOW()
          WHERE owner_user_id = ? AND public_id = ?'
     );
     $del = $db->prepare('DELETE FROM plc_rooms WHERE owner_user_id = ? AND public_id = ?');
@@ -657,16 +735,17 @@ function plc_sync_rooms(mysqli $db, int $ownerUserId, int $actorUserId, array $i
         if ($desksJson === false) {
             $desksJson = '[]';
         }
+        $visibility = (string)($item['visibility'] ?? '') === 'private' ? 'private' : 'shared';
         if (!isset($existing[$publicId]) && plc_public_id_exists_for_other_owner($db, 'room', $ownerUserId, $publicId)) {
             continue;
         }
         $seen[$publicId] = true;
 
         if (isset($existing[$publicId])) {
-            $upd->bind_param('ssiis', $name, $desksJson, $actorUserId, $ownerUserId, $publicId);
+            $upd->bind_param('sssiis', $name, $desksJson, $visibility, $actorUserId, $ownerUserId, $publicId);
             $upd->execute();
         } else {
-            $ins->bind_param('sissi', $publicId, $ownerUserId, $name, $desksJson, $actorUserId);
+            $ins->bind_param('sisssi', $publicId, $ownerUserId, $name, $desksJson, $visibility, $actorUserId);
             $ins->execute();
         }
     }
@@ -695,12 +774,13 @@ function plc_sync_classes(mysqli $db, int $ownerUserId, int $actorUserId, array 
 
     $seen = [];
     $ins = $db->prepare(
-        'INSERT INTO plc_classes (public_id, owner_user_id, name, students_json, created_by_user_id, updated_by_user_id)
-         VALUES (?, ?, ?, ?, ?, NULL)'
+        'INSERT INTO plc_classes (
+            public_id, owner_user_id, name, students_json, visibility, created_by_user_id, updated_by_user_id
+         ) VALUES (?, ?, ?, ?, ?, ?, NULL)'
     );
     $upd = $db->prepare(
         'UPDATE plc_classes
-         SET name = ?, students_json = ?, updated_by_user_id = ?, updated_at = NOW()
+         SET name = ?, students_json = ?, visibility = ?, updated_by_user_id = ?, updated_at = NOW()
          WHERE owner_user_id = ? AND public_id = ?'
     );
     $del = $db->prepare('DELETE FROM plc_classes WHERE owner_user_id = ? AND public_id = ?');
@@ -727,16 +807,17 @@ function plc_sync_classes(mysqli $db, int $ownerUserId, int $actorUserId, array 
         if ($studentsJson === false) {
             $studentsJson = '[]';
         }
+        $visibility = (string)($item['visibility'] ?? '') === 'private' ? 'private' : 'shared';
         if (!isset($existing[$publicId]) && plc_public_id_exists_for_other_owner($db, 'class', $ownerUserId, $publicId)) {
             continue;
         }
         $seen[$publicId] = true;
 
         if (isset($existing[$publicId])) {
-            $upd->bind_param('ssiis', $name, $studentsJson, $actorUserId, $ownerUserId, $publicId);
+            $upd->bind_param('sssiis', $name, $studentsJson, $visibility, $actorUserId, $ownerUserId, $publicId);
             $upd->execute();
         } else {
-            $ins->bind_param('sissi', $publicId, $ownerUserId, $name, $studentsJson, $actorUserId);
+            $ins->bind_param('sisssi', $publicId, $ownerUserId, $name, $studentsJson, $visibility, $actorUserId);
             $ins->execute();
         }
     }
@@ -854,6 +935,8 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, string $
 
     return plc_fetch_saved($db, $ownerUserId, $actorRole);
 }
+
+plc_ensure_entity_visibility_columns($db);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     try {

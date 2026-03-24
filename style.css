@@ -20,6 +20,16 @@
   --board-bg: #d8eed8;
   --board-border: #6a9a6a;
   --board-text: #2a5a2a;
+  --btn-primary-bg: #5a8a10;
+  --btn-primary-text: #ffffff;
+  --btn-primary-hover-bg: #6ea815;
+  --btn-danger-bg: #c13a3a;
+  --btn-danger-text: #ffffff;
+  --btn-danger-border: #a42f2f;
+  --btn-danger-hover-bg: #d24848;
+  --delete-confirm-bg: #fff1f1;
+  --delete-confirm-border: #e6b3b3;
+  --delete-confirm-text: #9b1f1f;
 }
 
 html[data-theme="dark"] {
@@ -41,6 +51,16 @@ html[data-theme="dark"] {
   --board-bg: #1a2e1a;
   --board-border: #3a6a3a;
   --board-text: #80c880;
+  --btn-primary-bg: #c8f060;
+  --btn-primary-text: #111111;
+  --btn-primary-hover-bg: #d9f57a;
+  --btn-danger-bg: #3a1a1a;
+  --btn-danger-text: #f08080;
+  --btn-danger-border: #5a2a2a;
+  --btn-danger-hover-bg: #4a2020;
+  --delete-confirm-bg: #2a1a1a;
+  --delete-confirm-border: #5a2a2a;
+  --delete-confirm-text: #f08080;
 }
 
 html[data-theme="light"] {
@@ -62,6 +82,16 @@ html[data-theme="light"] {
   --board-bg: #d8eed8;
   --board-border: #6a9a6a;
   --board-text: #2a5a2a;
+  --btn-primary-bg: #5a8a10;
+  --btn-primary-text: #ffffff;
+  --btn-primary-hover-bg: #6ea815;
+  --btn-danger-bg: #c13a3a;
+  --btn-danger-text: #ffffff;
+  --btn-danger-border: #a42f2f;
+  --btn-danger-hover-bg: #d24848;
+  --delete-confirm-bg: #fff1f1;
+  --delete-confirm-border: #e6b3b3;
+  --delete-confirm-text: #9b1f1f;
 }
 
 /* theme toggle */
@@ -325,13 +355,13 @@ main {
 }
 
 .btn-primary {
-  background: var(--accent);
-  color: #111;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
   font-weight: 600
 }
 
 .btn-primary:hover {
-  background: #d9f57a;
+  background: var(--btn-primary-hover-bg);
   transform: translateY(-1px)
 }
 
@@ -347,13 +377,13 @@ main {
 }
 
 .btn-danger {
-  background: #3a1a1a;
-  color: #f08080;
-  border: 1px solid #5a2a2a
+  background: var(--btn-danger-bg);
+  color: var(--btn-danger-text);
+  border: 1px solid var(--btn-danger-border)
 }
 
 .btn-danger:hover {
-  background: #4a2020
+  background: var(--btn-danger-hover-bg)
 }
 
 .btn-sm {
@@ -847,14 +877,14 @@ hr {
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  background: #2a1a1a;
-  border: 1px solid #5a2a2a;
+  background: var(--delete-confirm-bg);
+  border: 1px solid var(--delete-confirm-border);
   border-top: none;
   border-radius: 0 0 10px 10px;
   margin-top: -8px;
   margin-bottom: 8px;
   font-size: .78rem;
-  color: #f08080
+  color: var(--delete-confirm-text)
 }
 
 .delete-confirm.hidden {

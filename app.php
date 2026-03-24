@@ -303,10 +303,17 @@ $boot = [
   <button type="button" class="modal-close" onclick="closeModal('editor-modal')" aria-label="Stäng dialog">✕</button>
   <div class="modal-title" id="editor-title">Ny sal</div>
 
-  <div style="display:grid;grid-template-columns:1fr auto;gap:12px;max-width:100%;margin-bottom:14px">
+  <div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(170px,220px);gap:12px;max-width:100%;margin-bottom:14px">
     <div class="fg" style="margin:0">
       <label>Salens namn</label>
       <input type="text" id="editor-room-name" placeholder="t.ex. Sal 202, Matte-salen…">
+    </div>
+    <div class="fg" style="margin:0">
+      <label>Delning</label>
+      <select id="editor-room-visibility">
+        <option value="shared">Delad</option>
+        <option value="private">Egen</option>
+      </select>
     </div>
   </div>
 
@@ -384,7 +391,16 @@ $boot = [
 <div class="modal" style="width:min(96vw,480px)">
   <button type="button" class="modal-close" onclick="closeModal('class-modal')" aria-label="Stäng dialog">✕</button>
   <div class="modal-title" id="class-modal-title">Ny klass</div>
-  <div class="fg"><label>Klassens namn</label><input type="text" id="class-name-in" placeholder="t.ex. 9B, NA22A…"></div>
+  <div style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,190px);gap:12px">
+    <div class="fg"><label>Klassens namn</label><input type="text" id="class-name-in" placeholder="t.ex. 9B, NA22A…"></div>
+    <div class="fg">
+      <label>Delning</label>
+      <select id="class-visibility-in">
+        <option value="shared">Delad</option>
+        <option value="private">Egen</option>
+      </select>
+    </div>
+  </div>
   <div class="fg">
     <label>Elever (en per rad)</label>
     <textarea id="class-students-in" style="height:200px;resize:vertical" placeholder="Anna Andersson&#10;Erik Eriksson&#10;Sara Svensson&#10;…"></textarea>

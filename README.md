@@ -35,6 +35,13 @@ Koden är öppen källkod och finns tillgänglig på GitHub.
 
 ## Uppdateringar
 
+### 2026-03-24
+
+- Ändring: Lade till delningsläge för både salar och klasser: `Delad` (standard) eller `Egen`.
+- Ändring: `Egen` gör att sal/klass endast visas för ägaren och inte kan väljas av andra användare.
+- Ändring: Lärarurval filtrerar nu bort privata (`Egen`) salar/klasser för andra användare.
+- Ändring: Delade sparade placeringar från andra kräver nu att både sal och klass är `Delad`.
+
 ### 2026-03-17 22:42
 
 - Ändring: Lärare kan nu se och använda alla godkända klasser och salar, men får endast redigera/radera sina egna (server-side och UI-skydd).

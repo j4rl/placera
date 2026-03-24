@@ -138,6 +138,10 @@ function countPlacedDesks(room){
   return total;
 }
 
+function normalizeVisibility(raw){
+  return String(raw||'').toLowerCase()==='private'?'private':'shared';
+}
+
 function canEditEntity(item){
   if(!item)return false;
   if(typeof item.editable==='boolean')return item.editable;
@@ -158,6 +162,7 @@ function isForbiddenError(err){
 }
 
 function usageByOthersText(item){
+  if(normalizeVisibility(item?.visibility)==='private')return '';
   const cnt=Number(item?.usedByOthersCount||0);
   if(!canEditEntity(item)||cnt<=0)return '';
   return cnt===1?' · används av 1 annan':' · används av '+cnt+' andra';
@@ -355,7 +360,8 @@ function renderHome(){
   cs.innerHTML=classes.length
     ?classes.map(c=>{
       const ownerTxt=entityOwnerText(c);
-      const sub=`${c.students.length} elever${ownerTxt?` · ${ownerTxt}`:''}`;
+      const visTxt=normalizeVisibility(c.visibility)==='private'?' · Egen':'';
+      const sub=`${c.students.length} elever${visTxt}${ownerTxt?` · ${ownerTxt}`:''}`;
       return`<button type="button" class="pick-btn ${selClass===c.id?'sel':''}" aria-pressed="${selClass===c.id?'true':'false'}" onclick="pickC('${c.id}')">${escH(c.name)}<div class="sub">${escH(sub)}</div></button>`;
     }).join('')
     :isTeacherUser()&&allClasses.length
@@ -364,7 +370,8 @@ function renderHome(){
   rs.innerHTML=rooms.length
     ?rooms.map(r=>{
       const ownerTxt=entityOwnerText(r);
-      const sub=`${countPlacedDesks(r)} bänkar${ownerTxt?` · ${ownerTxt}`:''}`;
+      const visTxt=normalizeVisibility(r.visibility)==='private'?' · Egen':'';
+      const sub=`${countPlacedDesks(r)} bänkar${visTxt}${ownerTxt?` · ${ownerTxt}`:''}`;
       return`<button type="button" class="pick-btn ${selRoom===r.id?'sel':''}" aria-pressed="${selRoom===r.id?'true':'false'}" onclick="pickR('${r.id}')">${escH(r.name)}<div class="sub">${escH(sub)}</div></button>`;
     }).join('')
     :isTeacherUser()&&allRooms.length
@@ -1103,6 +1110,8 @@ function renderRoomList(){
   const rows=rooms.map(r=>{
     const deskCount=countPlacedDesks(r);
     const editable=canEditEntity(r);
+    const visibility=normalizeVisibility(r.visibility);
+    const visibilityTxt=editable?` · ${visibility==='private'?'egen':'delad'}`:'';
     const ownerTxt=entityOwnerText(r);
     const ownership=ownerTxt?(editable?' · min sal':` · ägs av ${escH(ownerTxt)}`):'';
     const usage=usageByOthersText(r);
@@ -1114,7 +1123,7 @@ function renderRoomList(){
       <button class="btn btn-danger btn-sm" onclick="deleteRoom('${r.id}')">✕</button>`
       :`<span class="hint">Skrivskyddad</span>`;
     return`<div class="list-item">
-    <div><div class="li-name">${escH(r.name)}</div><div class="li-sub">${deskCount} bänkar placerade${ownership}${usage}${r.createdAt?` · ${escH(fmtMetaDate(r.createdAt))}`:''}</div></div>
+    <div><div class="li-name">${escH(r.name)}</div><div class="li-sub">${deskCount} bänkar placerade${visibilityTxt}${ownership}${usage}${r.createdAt?` · ${escH(fmtMetaDate(r.createdAt))}`:''}</div></div>
     <div class="flex gap2">${pickToggle}${actions}</div></div>`;
   }).join('');
   el.innerHTML=teacherNote+rows;
@@ -1157,6 +1166,8 @@ function renderClassList(){
   if(!classes.length){el.innerHTML=`${teacherNote}<div class="empty"><div class="ico">👥</div><p>Inga klasser</p></div>`;return}
   const rows=classes.map(c=>{
     const editable=canEditEntity(c);
+    const visibility=normalizeVisibility(c.visibility);
+    const visibilityTxt=editable?` · ${visibility==='private'?'egen':'delad'}`:'';
     const ownerTxt=entityOwnerText(c);
     const ownership=ownerTxt?(editable?' · min klass':` · ägs av ${escH(ownerTxt)}`):'';
     const usage=usageByOthersText(c);
@@ -1168,7 +1179,7 @@ function renderClassList(){
       <button class="btn btn-danger btn-sm" onclick="deleteClass('${c.id}')">✕</button>`
       :`<span class="hint">Skrivskyddad</span>`;
     return`<div class="list-item">
-    <div><div class="li-name">${escH(c.name)}</div><div class="li-sub">${c.students.length} elever${ownership}${usage}${c.createdAt?` · ${escH(fmtMetaDate(c.createdAt))}`:''}</div></div>
+    <div><div class="li-name">${escH(c.name)}</div><div class="li-sub">${c.students.length} elever${visibilityTxt}${ownership}${usage}${c.createdAt?` · ${escH(fmtMetaDate(c.createdAt))}`:''}</div></div>
     <div class="flex gap2">${pickToggle}${actions}</div></div>`;
   }).join('');
   el.innerHTML=teacherNote+rows;
@@ -1182,11 +1193,13 @@ function openClassModal(id){
   }
   document.getElementById('class-modal-title').textContent=cls?'Redigera klass':'Ny klass';
   document.getElementById('class-name-in').value=cls?cls.name:'';
+  document.getElementById('class-visibility-in').value=cls?normalizeVisibility(cls.visibility):'shared';
   document.getElementById('class-students-in').value=cls?cls.students.join('\n'):'';
   openModal('class-modal');
 }
 async function saveClass(){
   const name=document.getElementById('class-name-in').value.trim();
+  const visibility=normalizeVisibility(document.getElementById('class-visibility-in').value);
   if(!name){notifyError('Ange ett namn.');return}
   const students=document.getElementById('class-students-in').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(!students.length){notifyError('Lägg till minst en elev.');return}
@@ -1195,7 +1208,9 @@ async function saveClass(){
     notifyError('Du kan bara redigera dina egna klasser.');
     return;
   }
-  const entry=existing?{...existing,name,students}:{id:'cls_'+Date.now(),name,students};
+  const entry=existing
+    ?{...existing,name,visibility,students}
+    :{id:'cls_'+Date.now(),name,visibility,students};
   try{
     await queuePersistUpsert('classes',entry);
     closeModal('class-modal');
@@ -1366,6 +1381,7 @@ function openEditor(id){
   }
   document.getElementById('editor-title').textContent=room?'Redigera sal':'Ny sal';
   document.getElementById('editor-room-name').value=room?room.name:'';
+  document.getElementById('editor-room-visibility').value=room?normalizeVisibility(room.visibility):'shared';
   selectedId=null;
 
   if(room){
@@ -1749,13 +1765,16 @@ function deleteSelected(){
 // ─── SAVE ROOM ─────────────────────────────────
 async function saveRoom(){
   const name=document.getElementById('editor-room-name').value.trim();
+  const visibility=normalizeVisibility(document.getElementById('editor-room-visibility').value);
   if(!name){notifyError('Ange ett namn för salen.');return}
   const existing=editingRoomId?getRooms().find(r=>r.id===editingRoomId):null;
   if(existing&&!canEditEntity(existing)){
     notifyError('Du kan bara redigera dina egna salar.');
     return;
   }
-  const data=existing?{...existing,name,desks:editorDesks.map(d=>({...d}))}:{id:'room_'+Date.now(),name,desks:editorDesks.map(d=>({...d}))};
+  const data=existing
+    ?{...existing,name,visibility,desks:editorDesks.map(d=>({...d}))}
+    :{id:'room_'+Date.now(),name,visibility,desks:editorDesks.map(d=>({...d}))};
   try{
     await queuePersistUpsert('rooms',data);
     closeModal('editor-modal');

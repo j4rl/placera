@@ -28,6 +28,45 @@ function plc_ensure_teacher_selection_table(mysqli $db): void
     );
 }
 
+function plc_ensure_entity_visibility_columns(mysqli $db): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+
+    $roomHasVisibility = false;
+    $classHasVisibility = false;
+
+    try {
+        $res = $db->query("SHOW COLUMNS FROM plc_rooms LIKE 'visibility'");
+        $roomHasVisibility = $res instanceof mysqli_result && $res->num_rows > 0;
+    } catch (Throwable $e) {
+        $roomHasVisibility = false;
+    }
+    if (!$roomHasVisibility) {
+        $db->query(
+            "ALTER TABLE plc_rooms
+             ADD COLUMN visibility ENUM('shared','private') NOT NULL DEFAULT 'shared' AFTER desks_json"
+        );
+    }
+
+    try {
+        $res = $db->query("SHOW COLUMNS FROM plc_classes LIKE 'visibility'");
+        $classHasVisibility = $res instanceof mysqli_result && $res->num_rows > 0;
+    } catch (Throwable $e) {
+        $classHasVisibility = false;
+    }
+    if (!$classHasVisibility) {
+        $db->query(
+            "ALTER TABLE plc_classes
+             ADD COLUMN visibility ENUM('shared','private') NOT NULL DEFAULT 'shared' AFTER students_json"
+        );
+    }
+
+    $done = true;
+}
+
 function plc_normalize_public_id_list(mixed $raw): array
 {
     if (!is_array($raw)) {
@@ -55,7 +94,7 @@ function plc_normalize_public_id_list(mixed $raw): array
     return $out;
 }
 
-function plc_filter_existing_entity_ids(mysqli $db, string $kind, array $ids): array
+function plc_filter_existing_entity_ids(mysqli $db, int $userId, string $kind, array $ids): array
 {
     if (!$ids) {
         return [];
@@ -76,10 +115,12 @@ function plc_filter_existing_entity_ids(mysqli $db, string $kind, array $ids): a
         $quoted[] = "'" . $db->real_escape_string($id) . "'";
     }
     $inList = implode(',', $quoted);
+    $userIdSql = (string)(int)$userId;
     $sql = "SELECT {$alias}.public_id AS public_id
             FROM {$table} {$alias}
             JOIN plc_users ou ON ou.id = {$alias}.owner_user_id
             WHERE ou.status = 'approved'
+              AND ({$alias}.visibility = 'shared' OR {$alias}.owner_user_id = {$userIdSql})
               AND {$alias}.public_id IN ({$inList})";
 
     $res = $db->query($sql);
@@ -123,12 +164,13 @@ function plc_fetch_teacher_selection(mysqli $db, int $userId): array
 
     $roomIds = plc_normalize_public_id_list(plc_decode_json_list($row['room_ids_json']));
     $classIds = plc_normalize_public_id_list(plc_decode_json_list($row['class_ids_json']));
-    $roomIds = plc_filter_existing_entity_ids($db, 'room', $roomIds);
-    $classIds = plc_filter_existing_entity_ids($db, 'class', $classIds);
+    $roomIds = plc_filter_existing_entity_ids($db, $userId, 'room', $roomIds);
+    $classIds = plc_filter_existing_entity_ids($db, $userId, 'class', $classIds);
     return ['roomIds' => $roomIds, 'classIds' => $classIds];
 }
 
 plc_ensure_teacher_selection_table($db);
+plc_ensure_entity_visibility_columns($db);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $selection = plc_fetch_teacher_selection($db, $userId);
@@ -147,8 +189,8 @@ plc_verify_csrf_or_403();
 $body = plc_read_json_body();
 $roomIds = plc_normalize_public_id_list($body['roomIds'] ?? []);
 $classIds = plc_normalize_public_id_list($body['classIds'] ?? []);
-$roomIds = plc_filter_existing_entity_ids($db, 'room', $roomIds);
-$classIds = plc_filter_existing_entity_ids($db, 'class', $classIds);
+$roomIds = plc_filter_existing_entity_ids($db, $userId, 'room', $roomIds);
+$classIds = plc_filter_existing_entity_ids($db, $userId, 'class', $classIds);
 
 $roomIdsJson = json_encode($roomIds, JSON_UNESCAPED_UNICODE);
 $classIdsJson = json_encode($classIds, JSON_UNESCAPED_UNICODE);
