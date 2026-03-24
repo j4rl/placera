@@ -161,6 +161,11 @@ function isForbiddenError(err){
   return String(err?.data?.error||'')==='forbidden';
 }
 
+function backendMessage(err,fallback=''){
+  const msg=String(err?.data?.message||'').trim();
+  return msg||fallback;
+}
+
 function usageByOthersText(item){
   if(normalizeVisibility(item?.visibility)==='private')return '';
   const cnt=Number(item?.usedByOthersCount||0);
@@ -180,6 +185,10 @@ function buildSavedDomKey(ownerUserId,id){
 
 function isTeacherUser(){
   return (currentUser?.role||'')==='teacher';
+}
+
+function getManageViewLabel(){
+  return isSiteAdmin?'Admin':'Hantera';
 }
 
 function normalizeSelectionIds(ids){
@@ -365,17 +374,20 @@ function renderHome(){
       return`<button type="button" class="pick-btn ${selClass===c.id?'sel':''}" aria-pressed="${selClass===c.id?'true':'false'}" onclick="pickC('${c.id}')">${escH(c.name)}<div class="sub">${escH(sub)}</div></button>`;
     }).join('')
     :isTeacherUser()&&allClasses.length
-      ?`<div class="empty"><div class="ico">👥</div><p>Inga klasser valda. Gå till Admin och kryssa i.</p></div>`
-      :`<div class="empty"><div class="ico">👥</div><p>Inga klasser tillagda</p></div>`;
+      ?`<div class="empty"><div class="ico">👥</div><p>Inga grupper valda. Gå till ${escH(getManageViewLabel())} och kryssa i.</p></div>`
+      :`<div class="empty"><div class="ico">👥</div><p>Inga grupper tillagda</p></div>`;
   rs.innerHTML=rooms.length
     ?rooms.map(r=>{
       const ownerTxt=entityOwnerText(r);
       const visTxt=normalizeVisibility(r.visibility)==='private'?' · Egen':'';
       const sub=`${countPlacedDesks(r)} bänkar${visTxt}${ownerTxt?` · ${ownerTxt}`:''}`;
-      return`<button type="button" class="pick-btn ${selRoom===r.id?'sel':''}" aria-pressed="${selRoom===r.id?'true':'false'}" onclick="pickR('${r.id}')">${escH(r.name)}<div class="sub">${escH(sub)}</div></button>`;
+      return`<div class="pick-room-wrap">
+        <button type="button" class="pick-btn pick-room-btn ${selRoom===r.id?'sel':''}" aria-pressed="${selRoom===r.id?'true':'false'}" onclick="pickR('${r.id}')">${escH(r.name)}<div class="sub">${escH(sub)}</div></button>
+        <button type="button" class="pick-preview-btn pick-preview-btn-inline" onclick="openRoomPreview('${r.id}')" aria-label="Förhandsvisa sal" title="Förhandsvisa sal">👁</button>
+      </div>`;
     }).join('')
     :isTeacherUser()&&allRooms.length
-      ?`<div class="empty"><div class="ico">🏫</div><p>Inga salar valda. Gå till Admin och kryssa i.</p></div>`
+      ?`<div class="empty"><div class="ico">🏫</div><p>Inga salar valda. Gå till ${escH(getManageViewLabel())} och kryssa i.</p></div>`
       :`<div class="empty"><div class="ico">🏫</div><p>Inga salar tillagda</p></div>`;
   document.getElementById('shuffle-btn').disabled=!(selClass&&selRoom&&selectedRoom?.desks?.some(d=>!d.inPool));
 }
@@ -390,7 +402,7 @@ function doShuffle(useResultSelection=false){
   const room=getPlacementRooms().find(r=>r.id===roomId);
   const cls=getPlacementClasses().find(c=>c.id===clsId);
   if(!room||!cls){
-    if(isTeacherUser())showToast('Välj klass och sal i Admin först.');
+    if(isTeacherUser())showToast(`Välj grupp och sal i ${getManageViewLabel()} först.`);
     return;
   }
   const placed=room.desks.filter(d=>!d.inPool);
@@ -687,7 +699,7 @@ async function confirmSavePlacement(){
   const saveAsCopy=shuffleResult?.savedEditable===false;
   const rawName=document.getElementById('save-name-input').value.trim();
   const now=new Date();
-  const autoName=`${cls.name||'Klass'} — ${room.name||'Sal'} (${now.toLocaleDateString('sv-SE',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})})`;
+  const autoName=`${cls.name||'Grupp'} — ${room.name||'Sal'} (${now.toLocaleDateString('sv-SE',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})})`;
   const name=rawName||autoName;
 
   const entry={
@@ -1112,22 +1124,91 @@ function renderRoomList(){
     const editable=canEditEntity(r);
     const visibility=normalizeVisibility(r.visibility);
     const visibilityTxt=editable?` · ${visibility==='private'?'egen':'delad'}`:'';
+    const ownBadge=visibility==='private'?'<span class="room-own-badge">EGEN</span>':'';
     const ownerTxt=entityOwnerText(r);
     const ownership=ownerTxt?(editable?' · min sal':` · ägs av ${escH(ownerTxt)}`):'';
     const usage=usageByOthersText(r);
     const pickToggle=isTeacherUser()
       ?renderTeacherPlacementToggle('room',r.id,isTeacherRoomSelected(r.id))
       :'';
+    const previewBtn=`<button class="btn btn-secondary btn-sm" onclick="openRoomPreview('${r.id}')">👁 Förhandsvisa</button>`;
     const actions=editable
-      ?`<button class="btn btn-secondary btn-sm" onclick="openEditor('${r.id}')">Redigera</button>
+      ?`${previewBtn}<button class="btn btn-secondary btn-sm" onclick="openEditor('${r.id}')">Redigera</button>
       <button class="btn btn-danger btn-sm" onclick="deleteRoom('${r.id}')">✕</button>`
-      :`<span class="hint">Skrivskyddad</span>`;
+      :`${previewBtn}<span class="hint">Skrivskyddad</span>`;
     return`<div class="list-item">
-    <div><div class="li-name">${escH(r.name)}</div><div class="li-sub">${deskCount} bänkar placerade${visibilityTxt}${ownership}${usage}${r.createdAt?` · ${escH(fmtMetaDate(r.createdAt))}`:''}</div></div>
+    <div><div class="li-name">${escH(r.name)}${ownBadge}</div><div class="li-sub">${deskCount} bänkar placerade${visibilityTxt}${ownership}${usage}${r.createdAt?` · ${escH(fmtMetaDate(r.createdAt))}`:''}</div></div>
     <div class="flex gap2">${pickToggle}${actions}</div></div>`;
   }).join('');
   el.innerHTML=teacherNote+rows;
 }
+
+function openRoomPreview(id){
+  const room=getRooms().find(r=>r.id===id)||null;
+  if(!room){
+    notifyError('Salen kunde inte hittas.');
+    return;
+  }
+  const titleEl=document.getElementById('room-preview-title');
+  if(titleEl)titleEl.textContent='Förhandsgranskning: '+room.name;
+  renderRoomPreview(room);
+  openModal('room-preview-modal');
+}
+
+function renderRoomPreview(room){
+  const board=document.getElementById('room-preview-board');
+  const canvas=document.getElementById('room-preview-canvas');
+  const meta=document.getElementById('room-preview-meta');
+  if(!board||!canvas||!meta)return;
+
+  const desks=Array.isArray(room?.desks)?room.desks:[];
+  const placed=desks.filter(d=>{
+    if(!d||d.inPool)return false;
+    return Number.isFinite(Number(d.x))&&Number.isFinite(Number(d.y));
+  });
+  const inPool=Math.max(0,desks.length-placed.length);
+  meta.textContent=`${placed.length} placerade bänkar${inPool?` · ${inPool} i pool`:''}`;
+
+  canvas.innerHTML='';
+  if(!placed.length){
+    board.style.width='100%';
+    canvas.style.width='100%';
+    canvas.style.height='220px';
+    canvas.innerHTML='<div class="room-preview-empty">Inga placerade bänkar i layouten.</div>';
+    return;
+  }
+
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  placed.forEach(d=>{
+    const x=Number(d.x)||0;
+    const y=Number(d.y)||0;
+    minX=Math.min(minX,x);
+    minY=Math.min(minY,y);
+    maxX=Math.max(maxX,x+EDITOR_DW);
+    maxY=Math.max(maxY,y+EDITOR_DH);
+  });
+
+  const pad=22;
+  const width=Math.max(280,Math.ceil((maxX-minX)+pad*2));
+  const height=Math.max(240,Math.ceil((maxY-minY)+pad*2));
+  board.style.width=width+'px';
+  canvas.style.width=width+'px';
+  canvas.style.height=height+'px';
+
+  placed.forEach((d,i)=>{
+    const x=Number(d.x)||0;
+    const y=Number(d.y)||0;
+    const rot=Number(d.rotation)||0;
+    const el=document.createElement('div');
+    el.className='room-preview-desk';
+    el.style.left=(x-minX+pad)+'px';
+    el.style.top=(y-minY+pad)+'px';
+    el.style.transform='rotate('+rot+'deg)';
+    el.innerHTML=`<span class="room-preview-num">${i+1}</span>`;
+    canvas.appendChild(el);
+  });
+}
+
 async function deleteRoom(id){
   const room=getRooms().find(r=>r.id===id)||null;
   if(room&&!canEditEntity(room)){
@@ -1161,15 +1242,16 @@ async function deleteRoom(id){
 function renderClassList(){
   const classes=getClasses(),el=document.getElementById('class-list');
   const teacherNote=isTeacherUser()
-    ?'<p class="hint admin-pick-note">Kryssa i vilka klasser du vill kunna använda i Placera-vyn.</p>'
+    ?'<p class="hint admin-pick-note">Kryssa i vilka grupper du vill kunna använda i Placera-vyn.</p>'
     :'';
-  if(!classes.length){el.innerHTML=`${teacherNote}<div class="empty"><div class="ico">👥</div><p>Inga klasser</p></div>`;return}
+  if(!classes.length){el.innerHTML=`${teacherNote}<div class="empty"><div class="ico">👥</div><p>Inga grupper</p></div>`;return}
   const rows=classes.map(c=>{
     const editable=canEditEntity(c);
     const visibility=normalizeVisibility(c.visibility);
     const visibilityTxt=editable?` · ${visibility==='private'?'egen':'delad'}`:'';
+    const ownBadge=visibility==='private'?'<span class="room-own-badge">EGEN</span>':'';
     const ownerTxt=entityOwnerText(c);
-    const ownership=ownerTxt?(editable?' · min klass':` · ägs av ${escH(ownerTxt)}`):'';
+    const ownership=ownerTxt?(editable?' · min grupp':` · ägs av ${escH(ownerTxt)}`):'';
     const usage=usageByOthersText(c);
     const pickToggle=isTeacherUser()
       ?renderTeacherPlacementToggle('class',c.id,isTeacherClassSelected(c.id))
@@ -1179,7 +1261,7 @@ function renderClassList(){
       <button class="btn btn-danger btn-sm" onclick="deleteClass('${c.id}')">✕</button>`
       :`<span class="hint">Skrivskyddad</span>`;
     return`<div class="list-item">
-    <div><div class="li-name">${escH(c.name)}</div><div class="li-sub">${c.students.length} elever${visibilityTxt}${ownership}${usage}${c.createdAt?` · ${escH(fmtMetaDate(c.createdAt))}`:''}</div></div>
+    <div><div class="li-name">${escH(c.name)}${ownBadge}</div><div class="li-sub">${c.students.length} elever${visibilityTxt}${ownership}${usage}${c.createdAt?` · ${escH(fmtMetaDate(c.createdAt))}`:''}</div></div>
     <div class="flex gap2">${pickToggle}${actions}</div></div>`;
   }).join('');
   el.innerHTML=teacherNote+rows;
@@ -1188,10 +1270,10 @@ function openClassModal(id){
   editingClassId=id;
   const cls=id?getClasses().find(c=>c.id===id):null;
   if(cls&&!canEditEntity(cls)){
-    notifyError('Du kan bara redigera dina egna klasser.');
+    notifyError('Du kan bara redigera dina egna grupper.');
     return;
   }
-  document.getElementById('class-modal-title').textContent=cls?'Redigera klass':'Ny klass';
+  document.getElementById('class-modal-title').textContent=cls?'Redigera grupp':'Ny grupp';
   document.getElementById('class-name-in').value=cls?cls.name:'';
   document.getElementById('class-visibility-in').value=cls?normalizeVisibility(cls.visibility):'shared';
   document.getElementById('class-students-in').value=cls?cls.students.join('\n'):'';
@@ -1205,7 +1287,7 @@ async function saveClass(){
   if(!students.length){notifyError('Lägg till minst en elev.');return}
   const existing=editingClassId?getClasses().find(c=>c.id===editingClassId):null;
   if(existing&&!canEditEntity(existing)){
-    notifyError('Du kan bara redigera dina egna klasser.');
+    notifyError('Du kan bara redigera dina egna grupper.');
     return;
   }
   const entry=existing
@@ -1214,23 +1296,23 @@ async function saveClass(){
   try{
     await queuePersistUpsert('classes',entry);
     closeModal('class-modal');
-    showToast('Klass sparad.');
+    showToast('Grupp sparad.');
   }catch(e){
     console.error(e);
     if(isForbiddenError(e)){
-      notifyError(e?.data?.message||'Du kan bara ändra dina egna klasser.');
+      notifyError(e?.data?.message||'Du kan bara ändra dina egna grupper.');
       return;
     }
-    notifyError('Kunde inte spara klassen.');
+    notifyError(backendMessage(e,'Kunde inte spara gruppen.'));
   }
 }
 async function deleteClass(id){
   const cls=getClasses().find(c=>c.id===id)||null;
   if(cls&&!canEditEntity(cls)){
-    notifyError('Du kan bara radera dina egna klasser.');
+    notifyError('Du kan bara radera dina egna grupper.');
     return;
   }
-  if(!confirm('Radera klass?'))return;
+  if(!confirm('Radera grupp?'))return;
   try{
     await queuePersistDelete('classes',id);
     if(isTeacherUser()&&isTeacherClassSelected(id)){
@@ -1243,14 +1325,14 @@ async function deleteClass(id){
       selClass=null;
       renderHome();
     }
-    showToast('Klass borttagen.');
+    showToast('Grupp borttagen.');
   }catch(e){
     console.error(e);
     if(isForbiddenError(e)){
-      notifyError(e?.data?.message||'Du kan bara radera dina egna klasser.');
+      notifyError(e?.data?.message||'Du kan bara radera dina egna grupper.');
       return;
     }
-    notifyError('Kunde inte radera klassen.');
+    notifyError('Kunde inte radera gruppen.');
   }
 }
 function changePw(){showToast('Lösenord hanteras via inloggningsdelen.')}
@@ -1959,7 +2041,7 @@ function buildPDF(){
 
   // Footer
   const ds=new Date().toLocaleDateString('sv-SE');
-  const footerText=`Klassplacering - ${ds}`;
+  const footerText=`Placera - ${ds}`;
   s+=`BT /F2 6 Tf ${rgb(mutedC)} rg ${M} ${fy(PH-7)} Td (${esc(footerText)}) Tj ET\n`;
 
   // ── Assemble PDF objects ──

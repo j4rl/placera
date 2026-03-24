@@ -58,5 +58,5 @@ while ($row = $placementsRead->fetch_assoc()) {
 }
 
 echo "Klar.\n";
-echo "Klasser: {$classesUpdated} uppdaterade av {$classesScanned}.\n";
+echo "Grupper: {$classesUpdated} uppdaterade av {$classesScanned}.\n";
 echo "Placeringar: {$placementsUpdated} uppdaterade av {$placementsScanned}.\n";

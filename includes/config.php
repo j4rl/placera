@@ -21,4 +21,4 @@ define('PLC_DB_PORT', (int)(getenv('PLC_DB_PORT') ?: 3306));
 define('PLC_DB_NAME', getenv('PLC_DB_NAME') ?: 'placera');
 define('PLC_DB_USER', getenv('PLC_DB_USER') ?: 'root');
 define('PLC_DB_PASS', getenv('PLC_DB_PASS') ?: '');
-define('PLC_DATA_KEY', getenv('PLC_DATA_KEY') ?: '');
+define('PLC_DATA_KEY', getenv('PLC_DATA_KEY') ?: 'YTKkXAQ8S6bvCispIvz++NNhWzS5k/EOA8+BoRCwHSE=');

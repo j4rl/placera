@@ -597,6 +597,45 @@ hr {
   margin-bottom: 6px
 }
 
+.pick-room-wrap {
+  position: relative;
+  margin-bottom: 6px
+}
+
+.pick-preview-btn {
+  appearance: none;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: .78rem;
+  cursor: pointer;
+  transition: all .18s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center
+}
+
+.pick-room-btn {
+  margin-bottom: 0;
+  padding-right: 52px
+}
+
+.pick-preview-btn-inline {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2
+}
+
+.pick-preview-btn:hover {
+  border-color: var(--accent2);
+  background: var(--surface2)
+}
+
 .pick-btn:hover {
   border-color: var(--accent);
   background: var(--surface2)
@@ -977,7 +1016,92 @@ hr {
 .li-name {
   font-family: var(--fh);
   font-weight: 700;
-  font-size: .9rem
+  font-size: .9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px
+}
+
+.room-own-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--fm);
+  font-size: .62rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: var(--btn-danger-text);
+  background: var(--btn-danger-bg);
+  border: 1px solid var(--btn-danger-border)
+}
+
+.room-preview-modal {
+  width: min(96vw, 860px)
+}
+
+.room-preview-wrap {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  overflow: auto
+}
+
+.room-preview-board {
+  background: var(--board-bg);
+  border: 1px solid var(--board-border);
+  color: var(--board-text);
+  border-radius: 8px;
+  text-align: center;
+  font-weight: 700;
+  font-size: .72rem;
+  padding: 9px 14px;
+  margin-bottom: 10px
+}
+
+#room-preview-canvas {
+  position: relative;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background-image:
+    radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0);
+  background-size: 14px 14px
+}
+
+.room-preview-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: .82rem;
+  text-align: center;
+  padding: 12px
+}
+
+.room-preview-desk {
+  position: absolute;
+  width: 80px;
+  height: 50px;
+  border-radius: 10px;
+  background: var(--desk-filled-bg);
+  border: 2px solid var(--desk-filled-border);
+  color: var(--desk-filled-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, .2)
+}
+
+.room-preview-num {
+  font-size: .76rem;
+  letter-spacing: .01em
 }
 
 .li-sub {

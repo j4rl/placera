@@ -13,24 +13,27 @@ $boot = [
     'role' => $user['role'],
   ],
 ];
+$isSiteAdmin = (($user['role'] ?? '') === 'admin');
+$manageViewLabel = $isSiteAdmin ? 'Admin' : 'Hantera';
+$managePanelLabel = $isSiteAdmin ? 'Administration' : 'Hantera';
 ?>
 <!DOCTYPE html>
 <html lang="sv">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Klassplacering</title>
+<title>Gruppplacering</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <header>
-  <div class="logo">Klass<span>placering</span></div>
+  <div class="logo">Grupp<span>placering</span></div>
   <nav class="main-nav">
     <button type="button" class="nav-btn active" onclick="showView('home')">Placera</button>
     <button type="button" class="nav-btn" onclick="showView('saved')">Placeringar</button>
-    <button type="button" class="nav-btn" onclick="showView('admin')">Admin</button>
+    <button type="button" class="nav-btn" onclick="showView('admin')"><?= htmlspecialchars($manageViewLabel, ENT_QUOTES, 'UTF-8') ?></button>
     <button type="button" class="nav-btn" onclick="showView('about')">Om</button>
   </nav>
   <div class="header-right">
@@ -55,10 +58,10 @@ $boot = [
 <div class="view active" id="home-view">
   <div class="home-hero">
     <div class="section-title">Slumpa <span style="color:var(--accent)">platser</span></div>
-    <p class="muted" style="font-size:.84rem">Välj klass och sal, sedan fixar vi resten.</p>
+    <p class="muted" style="font-size:.84rem">Välj grupp och sal, sedan fixar vi resten.</p>
     <div class="sel-grid">
       <div>
-        <div class="sel-label">Klass</div>
+        <div class="sel-label">Grupp</div>
         <div id="class-sel"></div>
       </div>
       <div>
@@ -129,9 +132,9 @@ $boot = [
 
       <h3>Vad appen gör</h3>
       <ul>
-        <li>Hanterar klasser och elevlistor.</li>
+        <li>Hanterar grupper och elevlistor.</li>
         <li>Hanterar salar och bänkplaceringar via visuell editor.</li>
-        <li>Slumpar placeringar automatiskt utifrån vald klass och sal.</li>
+        <li>Slumpar placeringar automatiskt utifrån vald grupp och sal.</li>
         <li>Låter användaren finjustera placeringar manuellt.</li>
         <li>Sparar placeringar för senare användning.</li>
         <li>Ger möjlighet till direktutskrift och nedladdning som PDF.</li>
@@ -143,7 +146,7 @@ $boot = [
         <li>Admin godkänner eller avslår ansökningar.</li>
         <li>Godkända användare kan logga in och använda verktyget.</li>
         <li>Systemet sparar vem som skapat eller uppdaterat salar och placeringar, samt när det gjordes.</li>
-        <li>Elevnamn i klasser och sparade placeringar krypteras i databasen.</li>
+        <li>Elevnamn i grupper och sparade placeringar krypteras i databasen.</li>
       </ul>
       <h3>Vem ligger bakom?</h3>
       <p>Placera är byggd av Charlie Jarl – på fritiden. <br>
@@ -200,17 +203,17 @@ $boot = [
 <!-- ADMIN -->
 <div class="view" id="admin-view">
   <div id="admin-login-screen" class="admin-login">
-    <div class="section-title">Admin</div>
-    <p class="muted mt2 mb2" style="font-size:.82rem">Endast användare med admin-roll kan öppna denna vy.</p>
+    <div class="section-title"><?= htmlspecialchars($manageViewLabel, ENT_QUOTES, 'UTF-8') ?></div>
+    <p class="muted mt2 mb2" style="font-size:.82rem">Hantera grupper, salar och användare utifrån din roll.</p>
   </div>
   <div id="admin-panel" style="display:none">
     <div class="flex gap4" style="align-items:center;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap">
-      <div><div class="section-title">Administration</div></div>
+      <div><div class="section-title"><?= htmlspecialchars($managePanelLabel, ENT_QUOTES, 'UTF-8') ?></div></div>
       <button type="button" class="btn btn-secondary" onclick="adminLogout()">Logga ut konto</button>
     </div>
     <div class="atabs">
       <button type="button" class="atab active" onclick="aTab('rooms')">Salar</button>
-      <button type="button" class="atab" onclick="aTab('classes')">Klasser</button>
+      <button type="button" class="atab" onclick="aTab('classes')">Grupper</button>
       <button type="button" class="atab" onclick="aTab('users')">Användare</button>
     </div>
     <div class="asec active" id="asec-rooms">
@@ -222,8 +225,8 @@ $boot = [
     </div>
     <div class="asec" id="asec-classes">
       <div class="flex gap3" style="align-items:center;justify-content:space-between;margin-bottom:14px">
-        <span class="card-title" style="margin:0">Sparade klasser</span>
-        <button type="button" class="btn btn-primary btn-sm" onclick="openClassModal(null)">+ Ny klass</button>
+        <span class="card-title" style="margin:0">Sparade grupper</span>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openClassModal(null)">+ Ny grupp</button>
       </div>
       <div id="class-list"></div>
     </div>
@@ -386,13 +389,29 @@ $boot = [
 </div>
 </div>
 
+<!-- ROOM PREVIEW MODAL -->
+<div class="overlay hidden" id="room-preview-modal">
+<div class="modal room-preview-modal">
+  <button type="button" class="modal-close" onclick="closeModal('room-preview-modal')" aria-label="Stäng dialog">✕</button>
+  <div class="modal-title" id="room-preview-title">Förhandsgranskning av sal</div>
+  <p class="hint" id="room-preview-meta" style="margin-bottom:10px"></p>
+  <div class="room-preview-wrap">
+    <div class="room-preview-board" id="room-preview-board">Tavla / Whiteboard</div>
+    <div id="room-preview-canvas"></div>
+  </div>
+  <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
+    <button type="button" class="btn btn-secondary" onclick="closeModal('room-preview-modal')">Stäng</button>
+  </div>
+</div>
+</div>
+
 <!-- CLASS MODAL -->
 <div class="overlay hidden" id="class-modal">
 <div class="modal" style="width:min(96vw,480px)">
   <button type="button" class="modal-close" onclick="closeModal('class-modal')" aria-label="Stäng dialog">✕</button>
-  <div class="modal-title" id="class-modal-title">Ny klass</div>
+  <div class="modal-title" id="class-modal-title">Ny grupp</div>
   <div style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,190px);gap:12px">
-    <div class="fg"><label>Klassens namn</label><input type="text" id="class-name-in" placeholder="t.ex. 9B, NA22A…"></div>
+    <div class="fg"><label>Gruppens namn</label><input type="text" id="class-name-in" placeholder="t.ex. 9B, NA22A…"></div>
     <div class="fg">
       <label>Delning</label>
       <select id="class-visibility-in">
@@ -408,7 +427,7 @@ $boot = [
   </div>
   <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
     <button type="button" class="btn btn-secondary" onclick="closeModal('class-modal')">Avbryt</button>
-    <button type="button" class="btn btn-primary" onclick="saveClass()">Spara klass</button>
+    <button type="button" class="btn btn-primary" onclick="saveClass()">Spara grupp</button>
   </div>
 </div>
 </div>

@@ -1025,11 +1025,25 @@ try {
         plc_json([
             'ok' => false,
             'error' => 'forbidden',
-            'message' => 'Du kan bara ändra dina egna klasser, salar och placeringar.',
+            'message' => 'Du kan bara ändra dina egna grupper, salar och placeringar.',
         ], 403);
+    }
+    if (str_contains($e->getMessage(), 'PLC_DATA_KEY is missing')) {
+        plc_json([
+            'ok' => false,
+            'error' => 'config_error',
+            'message' => 'Serverns krypteringsnyckel saknas (PLC_DATA_KEY). Kontakta administratör.',
+        ], 500);
     }
     plc_json(['ok' => false, 'error' => 'save_failed'], 500);
 } catch (Throwable $e) {
+    if (str_contains($e->getMessage(), 'PLC_DATA_KEY is missing')) {
+        plc_json([
+            'ok' => false,
+            'error' => 'config_error',
+            'message' => 'Serverns krypteringsnyckel saknas (PLC_DATA_KEY). Kontakta administratör.',
+        ], 500);
+    }
     plc_json(['ok' => false, 'error' => 'save_failed'], 500);
 }
 

@@ -10,9 +10,9 @@ Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare
 
 ## Vad appen gör
 
-- Hanterar klasser och elevlistor.
+- Hanterar grupper och elevlistor.
 - Hanterar salar och bänkplaceringar via visuell editor.
-- Slumpar placeringar automatiskt utifrån vald klass och sal.
+- Slumpar placeringar automatiskt utifrån vald grupp och sal.
 - Låter användaren finjustera placeringar manuellt.
 - Sparar placeringar för senare användning.
 - Ger möjlighet till direktutskrift och nedladdning som PDF.
@@ -23,7 +23,7 @@ Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare
 - Admin godkänner eller avslår ansökningar.
 - Godkända användare kan logga in och använda verktyget.
 - Systemet sparar vem som skapat eller uppdaterat salar och placeringar, samt när det gjordes.
-- Elevnamn i klasser och sparade placeringar krypteras i databasen.
+- Elevnamn i grupper och sparade placeringar krypteras i databasen.
 
 ## Vem som har utvecklat appen
 Appen är utvecklad av Charlie Jarl för att underlätta klassrumsplacering. 
@@ -37,26 +37,28 @@ Koden är öppen källkod och finns tillgänglig på GitHub.
 
 ### 2026-03-24
 
-- Ändring: Lade till delningsläge för både salar och klasser: `Delad` (standard) eller `Egen`.
-- Ändring: `Egen` gör att sal/klass endast visas för ägaren och inte kan väljas av andra användare.
-- Ändring: Lärarurval filtrerar nu bort privata (`Egen`) salar/klasser för andra användare.
-- Ändring: Delade sparade placeringar från andra kräver nu att både sal och klass är `Delad`.
+- Ändring: Bytte språk i gränssnittet från klass/klasser till grupp/grupper.
+- Ändring: Menyvalet heter nu `Hantera` för lärare och `Admin` för administratörer.
+- Ändring: Lade till delningsläge för både salar och grupper: `Delad` (standard) eller `Egen`.
+- Ändring: `Egen` gör att sal/grupp endast visas för ägaren och inte kan väljas av andra användare.
+- Ändring: Lärarurval filtrerar nu bort privata (`Egen`) salar/grupper för andra användare.
+- Ändring: Delade sparade placeringar från andra kräver nu att både sal och grupp är `Delad`.
 
 ### 2026-03-17 22:42
 
-- Ändring: Lärare kan nu se och använda alla godkända klasser och salar, men får endast redigera/radera sina egna (server-side och UI-skydd).
-- Ändring: Admin-vyn för lärare visar nu klass- och salhantering (användarhantering är fortsatt endast för admin).
-- Ändring: Lade till lärarstyrt urval för Placera-vyn: lärare kan kryssa i vilka klasser och salar som ska vara valbara (default är inget valt).
+- Ändring: Lärare kan nu se och använda alla godkända grupper och salar, men får endast redigera/radera sina egna (server-side och UI-skydd).
+- Ändring: Hantera-vyn för lärare visar nu grupp- och salhantering (användarhantering är fortsatt endast för admin).
+- Ändring: Lade till lärarstyrt urval för Placera-vyn: lärare kan kryssa i vilka grupper och salar som ska vara valbara (default är inget valt).
 - Ändring: Lade till ny endpoint för lärarurval (`api/teacher_selection.php`) samt tabell för urval i databas (`plc_teacher_placement_selection`).
-- Ändring: Lade till indikator i adminlistor som visar hur många andra användare som valt en klass/sal du äger.
+- Ändring: Lade till indikator i adminlistor som visar hur många andra användare som valt en grupp/sal du äger.
 - Ändring: Förbättrade urvals-kontrollen visuellt (chip/toggle) och gjorde vald/ej vald lika breda.
-- Ändring: Lärare kan nu se sparade placeringar från andra lärare/admin när både klass och sal matchar lärarens valda urval.
+- Ändring: Lärare kan nu se sparade placeringar från andra lärare/admin när både grupp och sal matchar lärarens valda urval.
 - Ändring: Delade sparade placeringar är skrivskyddade för icke-ägare; de kan öppnas men inte redigeras/raderas.
 - Ändring: Vid skrivskyddad sparad placering används “Spara som ny” (skapar kopia i stället för att skriva över originalet).
 
 ### 2026-03-17 19:03
 
-- Ändring: Lade till kryptering-at-rest för elevnamn i klasser och sparade placeringar via `includes/crypto.php`.
+- Ändring: Lade till kryptering-at-rest för elevnamn i grupper och sparade placeringar via `includes/crypto.php`.
 - Ändring: State-API dekrypterar namn vid läsning och krypterar vid skrivning så klienten fortsatt får samma dataformat.
 - Ändring: Lade till migreringsskript för att kryptera befintliga namn i databasen (`scripts/migrate_encrypt_student_data.php`).
 - Ändring: Lade till konfigurationskrav för `PLC_DATA_KEY`.
@@ -81,6 +83,6 @@ Koden är öppen källkod och finns tillgänglig på GitHub.
 
 ### 2026-03-17
 
-- Ändring: Optimerade state-API och klienten till att spara enstaka salar, klasser och placeringar via upsert/delete i stället för att skicka hela listor varje gång.
+- Ändring: Optimerade state-API och klienten till att spara enstaka salar, grupper och placeringar via upsert/delete i stället för att skicka hela listor varje gång.
 - Ändring: Optimerade adminhantering så att klienten uppdaterar en användare i cachen efter ändring i stället för att ladda om hela användarlistan.
 - Ändring: Minskat onödiga omräkningar i vissa listvyer genom att återanvända beräknade bänk- och placeringsvärden.
