@@ -345,7 +345,7 @@ function showView(n){
   adminIn=(n==='admin');
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
-  const views=['home','saved','about','admin'];
+  const views=['home','saved','admin','about'];
   document.getElementById(n+'-view').classList.add('active');
   const idx=views.indexOf(n);
   if(idx>=0)document.querySelectorAll('.nav-btn')[idx].classList.add('active');
