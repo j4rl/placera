@@ -49,8 +49,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $role = (string)($row['role'] ?? '');
                 $schoolId = (int)($row['school_id'] ?? 0);
                 $schoolStatus = (string)($row['school_status'] ?? '');
+                $isSchoolAdmin = $role === 'school_admin';
                 $eligible = $status === 'approved'
-                    && ($role === 'superadmin' || ($schoolId > 0 && $schoolStatus === 'approved'));
+                    && (
+                        $role === 'superadmin'
+                        || ($schoolId > 0 && ($schoolStatus === 'approved' || $isSchoolAdmin))
+                    );
                 if ($eligible) {
                     $token = plc_password_reset_create($db, (int)$row['id'], 60);
                     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';

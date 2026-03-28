@@ -247,6 +247,18 @@ function plc_is_school_admin(array $user): bool
     return (string)($user['role'] ?? '') === 'school_admin';
 }
 
+function plc_is_school_approved(array $user): bool
+{
+    $schoolId = (int)($user['school_id'] ?? 0);
+    $schoolStatus = (string)($user['school_status'] ?? '');
+    return $schoolId > 0 && $schoolStatus === 'approved';
+}
+
+function plc_is_school_admin_readonly_mode(array $user): bool
+{
+    return plc_is_school_admin($user) && !plc_is_school_approved($user);
+}
+
 function plc_can_manage_users(array $user): bool
 {
     return plc_is_superadmin($user) || plc_is_school_admin($user);
@@ -287,15 +299,22 @@ function plc_current_user(): ?array
     }
     $isSuperadmin = (string)($user['role'] ?? '') === 'superadmin';
     if (!$isSuperadmin) {
+        $isSchoolAdmin = (string)($user['role'] ?? '') === 'school_admin';
         $schoolId = (int)($user['school_id'] ?? 0);
         $schoolStatus = (string)($user['school_status'] ?? '');
         $schoolRequire2fa = (int)($user['school_require_2fa'] ?? 0) === 1;
         $twofaEnabled = (int)($user['twofa_enabled'] ?? 0) === 1;
-        if ($schoolId <= 0 || $schoolStatus !== 'approved') {
+        $schoolApproved = $schoolId > 0 && $schoolStatus === 'approved';
+        if ($schoolId <= 0) {
             unset($_SESSION['plc_user_id']);
             return null;
         }
-        if ($schoolRequire2fa && !$twofaEnabled) {
+        if (!$schoolApproved && !$isSchoolAdmin) {
+            unset($_SESSION['plc_user_id']);
+            return null;
+        }
+        $enforceSchool2FA = $schoolRequire2fa && !($isSchoolAdmin && !$schoolApproved);
+        if ($enforceSchool2FA && !$twofaEnabled) {
             unset($_SESSION['plc_user_id']);
             return null;
         }

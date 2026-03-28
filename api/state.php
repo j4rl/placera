@@ -10,6 +10,8 @@ plc_ensure_multischool_schema($db);
 $ownerUserId = (int)$user['id'];
 $actorRole = (string)($user['role'] ?? 'teacher');
 $actorSchoolId = plc_user_school_id($user);
+$actorSchoolStatus = (string)($user['school_status'] ?? '');
+$isSchoolAdminReadOnly = plc_is_school_admin($user) && $actorSchoolStatus !== 'approved';
 
 if (plc_is_superadmin($user)) {
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -1022,6 +1024,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     plc_json(['ok' => false, 'error' => 'method_not_allowed'], 405);
+}
+
+if ($isSchoolAdminReadOnly) {
+    plc_json([
+        'ok' => false,
+        'error' => 'forbidden',
+        'message' => 'Skolan är inte godkänd ännu. Skoladmin kan logga in men inte utföra åtgärder.',
+    ], 403);
 }
 
 plc_verify_csrf_or_403();

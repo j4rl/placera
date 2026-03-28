@@ -71,7 +71,11 @@ function plc_password_reset_find_active_by_token(mysqli $db, string $token): ?ar
     if ($role !== 'superadmin') {
         $schoolId = (int)($row['school_id'] ?? 0);
         $schoolStatus = (string)($row['school_status'] ?? '');
-        if ($schoolId <= 0 || $schoolStatus !== 'approved') {
+        $isSchoolAdmin = $role === 'school_admin';
+        if ($schoolId <= 0) {
+            return null;
+        }
+        if (!$isSchoolAdmin && $schoolStatus !== 'approved') {
             return null;
         }
     }

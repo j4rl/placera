@@ -13,6 +13,13 @@ let teacherPlacementSelection={roomIds:[],classIds:[]};
 let teacherSelectionPersistQueue=Promise.resolve();
 let twofaProfileState=null;
 let schoolSecurityState=null;
+let schoolAdminReadonlyNoticeShown=false;
+let classImportPending=null;
+let classImportBindingsReady=false;
+let classImportXlsxLoader=null;
+const CLASS_IMPORT_NAME_KW=['namn','name','fornamn','förnamn','efternamn','firstname','lastname','first','last','elev','student','deltagare','person','fullname','full','givenname','surname','familyname'];
+const CLASS_IMPORT_FIRST_KW=['fornamn','förnamn','firstname','first name','first','givenname','given','för','for'];
+const CLASS_IMPORT_LAST_KW=['efternamn','lastname','last name','last','surname','familyname','family','efter'];
 const STATE_KEYS=['rooms','classes','saved'];
 const colorSchemeQuery=window.matchMedia('(prefers-color-scheme: dark)');
 const reducedMotionQuery=window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -198,6 +205,10 @@ function isSuperAdminUser(){
   return (currentUser?.role||'')==='superadmin';
 }
 
+function isSchoolAdminReadOnlyMode(){
+  return isSchoolAdminUser()&&String(currentUser?.schoolStatus||'')!=='approved';
+}
+
 function roleLabel(role){
   if(role==='superadmin')return'Superadmin';
   if(role==='school_admin')return'Skoladmin';
@@ -353,8 +364,13 @@ const EDITOR_SIDE_PAD=16;
 function updateUserBadge(){
   const nameEl=document.getElementById('user-name-text');
   const roleEl=document.getElementById('user-role-text');
+  const schoolEl=document.getElementById('logo-school-name');
   if(nameEl)nameEl.textContent=currentUser?.fullName||'';
   if(roleEl)roleEl.textContent=currentUser?.roleLabel||roleLabel(currentUser?.role||'');
+  if(schoolEl){
+    const schoolName=String(currentUser?.schoolName||'').trim();
+    schoolEl.textContent=schoolName?` - ${schoolName}`:'';
+  }
 }
 
 // ═══════════════ NAV ═══════════════
@@ -1076,39 +1092,44 @@ function confetti(){
 
 // ═══════════════ ADMIN ═══════════════
 let adminUsersCache=[];
+let adminSchoolsCache=[];
 function checkPw(){renderAdmin()}
 function adminLogout(){
   window.location.href='logout.php';
 }
 function aTab(t){
-  if(isSuperAdminUser())t='users';
+  if(isSuperAdminUser()&&!['users','schools'].includes(t))t='schools';
+  if(!isSuperAdminUser()&&t==='schools')t='rooms';
   if(t==='users'&&!isSiteAdmin)t='rooms';
-  const tabs=['rooms','classes','users'];
-  document.querySelectorAll('.atab').forEach((b,i)=>b.classList.toggle('active',tabs[i]===t));
+  const tabs=['rooms','classes','users','schools'];
+  document.querySelectorAll('.atab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
   document.querySelectorAll('.asec').forEach(s=>s.classList.remove('active'));
-  document.getElementById('asec-'+t).classList.add('active');
+  const section=document.getElementById('asec-'+t);
+  if(section)section.classList.add('active');
   if(t==='users'&&isSiteAdmin)renderAdminUsersSection();
+  if(t==='schools'&&isSuperAdminUser())renderAdminSchoolsSection();
 }
 function renderAdmin(){
   const login=document.getElementById('admin-login-screen');
   const panel=document.getElementById('admin-panel');
-  const tabs=document.querySelectorAll('.atab');
-  const roomsTab=tabs[0]||null;
-  const classesTab=tabs[1]||null;
-  const usersTab=tabs[2]||null;
+  const roomsTab=document.getElementById('atab-rooms');
+  const classesTab=document.getElementById('atab-classes');
+  const usersTab=document.getElementById('atab-users');
+  const schoolsTab=document.getElementById('atab-schools');
   const roomsSection=document.getElementById('asec-rooms');
   const classesSection=document.getElementById('asec-classes');
   const usersSection=document.getElementById('asec-users');
+  const schoolsSection=document.getElementById('asec-schools');
 
   login.style.display='none';
   panel.style.display='block';
   renderSchoolSecurityCard();
 
   if(isSuperAdminUser()){
-    document.querySelectorAll('.atab').forEach((b,i)=>b.classList.toggle('active',i===2));
     if(roomsTab)roomsTab.style.display='none';
     if(classesTab)classesTab.style.display='none';
     if(usersTab)usersTab.style.display='';
+    if(schoolsTab)schoolsTab.style.display='';
     if(roomsSection){
       roomsSection.style.display='none';
       roomsSection.classList.remove('active');
@@ -1119,26 +1140,50 @@ function renderAdmin(){
     }
     if(usersSection){
       usersSection.style.display='';
-      usersSection.classList.add('active');
     }
+    if(schoolsSection){
+      schoolsSection.style.display='';
+    }
+    const currentSuperTab=document.querySelector('.atab.active')?.dataset?.tab||'';
+    const nextSuperTab=(currentSuperTab==='users'||currentSuperTab==='schools')?currentSuperTab:'schools';
+    aTab(nextSuperTab);
     loadAdminUsers().then(renderAdminUsersSection);
+    loadAdminSchools().then(renderAdminSchoolsSection);
     return;
   }
 
   if(roomsTab)roomsTab.style.display='';
   if(classesTab)classesTab.style.display='';
+  if(usersTab)usersTab.style.display=isSiteAdmin?'':'none';
+  if(schoolsTab)schoolsTab.style.display='none';
+  const readOnlySchoolAdmin=isSchoolAdminReadOnlyMode();
+  const newRoomBtn=document.getElementById('btn-new-room');
+  const newClassBtn=document.getElementById('btn-new-class');
+  if(newRoomBtn)newRoomBtn.style.display=readOnlySchoolAdmin?'none':'';
+  if(newClassBtn)newClassBtn.style.display=readOnlySchoolAdmin?'none':'';
   if(roomsSection)roomsSection.style.display='';
   if(classesSection)classesSection.style.display='';
-
-  if(usersTab)usersTab.style.display=isSiteAdmin?'':'none';
   if(usersSection){
     usersSection.style.display=isSiteAdmin?'':'none';
     if(!isSiteAdmin)usersSection.classList.remove('active');
   }
-  if(!isSiteAdmin&&usersTab?.classList.contains('active'))aTab('rooms');
+  if(schoolsSection){
+    schoolsSection.style.display='none';
+    schoolsSection.classList.remove('active');
+  }
+  const activeTab=document.querySelector('.atab.active')?.dataset?.tab||'';
+  if(!isSiteAdmin&&activeTab==='users')aTab('rooms');
+  if(activeTab==='schools')aTab('rooms');
 
   renderRoomList();
   renderClassList();
+  if(readOnlySchoolAdmin&&!schoolAdminReadonlyNoticeShown){
+    schoolAdminReadonlyNoticeShown=true;
+    showToast('Skolan är inte godkänd ännu. Du kan logga in men inte utföra åtgärder.');
+  }
+  if(!readOnlySchoolAdmin){
+    schoolAdminReadonlyNoticeShown=false;
+  }
   if(isSiteAdmin){
     loadAdminUsers().then(renderAdminUsersSection);
   }
@@ -1165,11 +1210,200 @@ async function loadAdminUsers(){
   }
 }
 
+function sortAdminSchools(schools){
+  const rank={pending:0,approved:1,disabled:2,rejected:3};
+  return [...schools].sort((a,b)=>{
+    const rankDiff=(rank[a?.status]??99)-(rank[b?.status]??99);
+    if(rankDiff!==0)return rankDiff;
+    return String(a?.name||'').localeCompare(String(b?.name||''),'sv-SE');
+  });
+}
+
+function upsertAdminSchoolCache(school){
+  if(!school?.id)return;
+  const next=[...adminSchoolsCache];
+  const idx=next.findIndex(entry=>Number(entry.id)===Number(school.id));
+  if(idx>=0)next[idx]=school;
+  else next.push(school);
+  adminSchoolsCache=sortAdminSchools(next);
+}
+
+function removeAdminSchoolFromCache(schoolId){
+  adminSchoolsCache=adminSchoolsCache.filter(s=>Number(s.id)!==Number(schoolId));
+}
+
+function findAdminSchoolById(schoolId){
+  return adminSchoolsCache.find(s=>Number(s.id)===Number(schoolId))||null;
+}
+
+async function loadAdminSchools(){
+  if(!isSuperAdminUser())return;
+  try{
+    const data=await apiRequest('api/admin_schools.php');
+    adminSchoolsCache=sortAdminSchools(Array.isArray(data?.schools)?data.schools:[]);
+  }catch(e){
+    console.error(e);
+    showToast('Kunde inte hämta skolor.');
+  }
+}
+
+function schoolStatusText(status){
+  if(status==='approved')return'Godkänd';
+  if(status==='rejected')return'Avslagen';
+  if(status==='disabled')return'Inaktiverad';
+  return'Väntande';
+}
+
+function schoolStatusChip(status){
+  const safe=String(status||'pending');
+  const label=schoolStatusText(safe);
+  return `<span class="school-status-chip school-status-${escH(safe)}">${escH(label)}</span>`;
+}
+
+async function adminSchoolAction(action,schoolId,extra={}){
+  try{
+    const data=await apiRequest('api/admin_schools.php',{
+      method:'POST',
+      body:JSON.stringify({action,schoolId,...extra})
+    });
+    if(data?.school)upsertAdminSchoolCache(data.school);
+    if(data?.deletedSchoolId)removeAdminSchoolFromCache(data.deletedSchoolId);
+    renderAdminSchoolsSection();
+    if(data?.deletedSchoolId){
+      await loadAdminUsers();
+      renderAdminUsersSection();
+    }
+    return data?.school||null;
+  }catch(e){
+    console.error(e);
+    showToast(e?.data?.message||'Kunde inte uppdatera skolan.');
+    return null;
+  }
+}
+
+async function setAdminSchoolStatus(schoolId,status){
+  const school=findAdminSchoolById(schoolId);
+  if(!school)return;
+  if(status==='disabled'&&!confirm(`Inaktivera skolan ${school.name}? Användare kan inte logga in tills skolan godkänns igen.`))return;
+  if(status==='rejected'&&!confirm(`Avslå skolan ${school.name}?`))return;
+  const updated=await adminSchoolAction('set_status',schoolId,{status});
+  if(updated)showToast(`Skolstatus uppdaterad till ${schoolStatusText(updated.status).toLowerCase()}.`);
+}
+
+function openAdminSchoolModal(schoolId){
+  const school=findAdminSchoolById(schoolId);
+  if(!school)return;
+  document.getElementById('admin-school-id').value=String(school.id);
+  document.getElementById('admin-school-name').value=school.name||'';
+  document.getElementById('admin-school-status').value=school.status||'pending';
+  document.getElementById('admin-school-require-2fa').checked=!!school.require2FA;
+  const metaEl=document.getElementById('admin-school-meta');
+  if(metaEl){
+    const admins=Number(school?.schoolAdminCount||0);
+    const users=Number(school?.userCount||0);
+    metaEl.textContent=`Användare: ${users}. Skoladmin: ${admins}.`;
+  }
+  openModal('admin-school-modal');
+}
+
+async function saveAdminSchoolEdit(){
+  const schoolId=parseInt(document.getElementById('admin-school-id').value,10)||0;
+  if(schoolId<=0)return;
+  const name=(document.getElementById('admin-school-name').value||'').trim();
+  const status=(document.getElementById('admin-school-status').value||'pending').trim();
+  const require2FA=!!document.getElementById('admin-school-require-2fa').checked;
+  if(name.length<2){notifyError('Skolnamn måste vara minst 2 tecken.');return}
+  const updated=await adminSchoolAction('update_school',schoolId,{name,status,require2FA});
+  if(!updated)return;
+  closeModal('admin-school-modal');
+  showToast('Skola uppdaterad.');
+}
+
+async function deleteAdminSchool(schoolId){
+  const school=findAdminSchoolById(schoolId);
+  if(!school)return;
+  if(String(school.status)!=='rejected'){
+    notifyError('Endast skolor med status Avslagen kan raderas.');
+    return;
+  }
+  const ok=confirm(`Radera skolan ${school.name}? Detta raderar alla användare, skoladmins och data kopplad till skolan permanent.`);
+  if(!ok)return;
+  const typedName=prompt(`Skriv skolans namn för att bekräfta permanent radering:\n\n${school.name}`,'');
+  if(typedName===null)return;
+  if(String(typedName).trim()!==String(school.name).trim()){
+    notifyError('Fel skolnamn. Radering avbröts.');
+    return;
+  }
+  const result=await adminSchoolAction('delete_school',schoolId);
+  if(result===null){
+    const stillThere=findAdminSchoolById(schoolId);
+    if(stillThere)return;
+  }
+  showToast('Skola raderad.');
+}
+
+function renderAdminSchoolsSection(){
+  const host=document.getElementById('schools-list');
+  if(!host)return;
+  if(!isSuperAdminUser()){
+    host.innerHTML='<p class="muted">Ingen behörighet.</p>';
+    return;
+  }
+  if(!adminSchoolsCache.length){
+    host.innerHTML='<p class="muted">Inga skolor att visa.</p>';
+    return;
+  }
+
+  host.innerHTML=adminSchoolsCache.map(school=>{
+    const admins=Array.isArray(school.schoolAdmins)?school.schoolAdmins:[];
+    const adminsHtml=admins.length
+      ?`<div class="school-admin-list">${
+        admins.map(admin=>`<div class="school-admin-item"><strong>${escH(admin.fullName||'')}</strong> <span class="hint" style="margin:0">(${escH(admin.email||'')}) · ${escH(schoolStatusText(admin.status||''))}</span></div>`).join('')
+      }</div>`
+      :'<p class="muted" style="font-size:.76rem">Ingen skoladmin tilldelad.</p>';
+    const created=fmtMetaDate(school.createdAt);
+    const approved=fmtMetaDate(school.approvedAt);
+    const summaryMeta=[
+      `${Number(school.userCount||0)} användare`,
+      `${Number(school.schoolAdminCount||0)} skoladmin`,
+      school.require2FA?'Kräver 2FA':'2FA valfritt'
+    ].join(' · ');
+    const schoolActions=[
+      `<button class="btn btn-secondary btn-sm" onclick="openAdminSchoolModal(${school.id})">Redigera</button>`,
+      school.status!=='approved'?`<button class="btn btn-primary btn-sm" onclick="setAdminSchoolStatus(${school.id},'approved')">Godkänn</button>`:'',
+      school.status!=='pending'?`<button class="btn btn-secondary btn-sm" onclick="setAdminSchoolStatus(${school.id},'pending')">Sätt väntande</button>`:'',
+      school.status!=='rejected'?`<button class="btn btn-secondary btn-sm" onclick="setAdminSchoolStatus(${school.id},'rejected')">Avslå</button>`:'',
+      school.status!=='disabled'?`<button class="btn btn-danger btn-sm" onclick="setAdminSchoolStatus(${school.id},'disabled')">Inaktivera</button>`:'',
+      school.status==='rejected'?`<button class="btn btn-danger btn-sm" onclick="deleteAdminSchool(${school.id})">Radera skola</button>`:''
+    ].filter(Boolean).join('');
+
+    return `<details class="school-details">
+      <summary>
+        <div>
+          <div class="school-summary-main">${escH(school.name||'Okänd skola')} ${schoolStatusChip(school.status)}</div>
+          <div class="school-summary-meta">${escH(summaryMeta)}</div>
+        </div>
+        <span class="hint">Visa mer</span>
+      </summary>
+      <div class="school-details-body">
+        <div class="li-sub">${escH(
+          [
+            created?`Skapad ${created}`:'',
+            approved?`Godkänd ${approved}${school.approvedByName?` av ${school.approvedByName}`:''}`:''
+          ].filter(Boolean).join(' · ')
+        )}</div>
+        <div class="mt2"><strong>Skoladmin:</strong>${adminsHtml}</div>
+        <div class="flex gap2 mt2" style="flex-wrap:wrap">${schoolActions}</div>
+      </div>
+    </details>`;
+  }).join('');
+}
+
 function renderSchoolSecurityCard(){
   const card=document.getElementById('school-security-card');
   const toggle=document.getElementById('school-require-2fa-toggle');
   if(!card||!toggle)return;
-  if(isSchoolAdminUser()&&!isSuperAdminUser()){
+  if(isSchoolAdminUser()&&!isSuperAdminUser()&&!isSchoolAdminReadOnlyMode()){
     card.style.display='';
     toggle.checked=!!schoolSecurityState?.require2FA;
   }else{
@@ -1233,6 +1467,10 @@ async function adminUserAction(action,userId,role='teacher',extra={}){
     const data=await apiRequest('api/admin_users.php',{method:'POST',body:JSON.stringify({action,userId,role,...extra})});
     if(data?.user)upsertAdminUserCache(data.user);
     if(action==='approve_school'&&!data?.user)await loadAdminUsers();
+    if(action==='approve_school'&&isSuperAdminUser()){
+      await loadAdminSchools();
+      renderAdminSchoolsSection();
+    }
     renderAdminUsersSection();
     if(action==='reset_2fa')showToast('2FA återställd för användaren.');
   }catch(e){
@@ -1350,6 +1588,7 @@ function renderAdminUsersSection(){
     existingHost.innerHTML='<p class="muted">Ingen behörighet.</p>';
     return;
   }
+  const readOnlySchoolAdmin=isSchoolAdminReadOnlyMode();
   const pending=adminUsersCache.filter(u=>u.status==='pending');
   const existing=adminUsersCache.filter(u=>u.status!=='pending');
 
@@ -1366,8 +1605,8 @@ function renderAdminUsersSection(){
         ?`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('approve_school',${u.id},'teacher',{schoolId:${Number(u.schoolId)}})">Godkänn skola</button>`
         :'';
       const approveRole=(u.role==='school_admin'||u.role==='superadmin')?u.role:'teacher';
-      const canApprove=isSuperAdminUser()||(isSchoolAdminUser()&&u.role==='teacher');
-      const openBtn=(isSuperAdminUser()||u.role==='teacher')
+      const canApprove=!readOnlySchoolAdmin&&(isSuperAdminUser()||(isSchoolAdminUser()&&u.role==='teacher'));
+      const openBtn=!readOnlySchoolAdmin&&(isSuperAdminUser()||u.role==='teacher')
         ?`<button class="btn btn-secondary btn-sm" onclick="openAdminUserModal(${u.id})">Öppna</button>`
         :'';
       return`<div class="list-item">
@@ -1395,7 +1634,7 @@ function renderAdminUsersSection(){
     const self=(u.id===Number(currentUser?.id));
     const schoolApproval=fmtMetaDate(u.schoolApprovedAt);
     const roleText=u.roleLabel||roleLabel(u.role);
-    const schoolAdminCanManage=isSchoolAdminUser()&&u.role==='teacher';
+    const schoolAdminCanManage=!readOnlySchoolAdmin&&isSchoolAdminUser()&&u.role==='teacher';
     const canManageActions=!self&&(isSuperAdminUser()||schoolAdminCanManage);
     const resetTwofaBtn=canManageActions&&u.twofaEnabled
       ?`<button class="btn btn-secondary btn-sm" onclick="adminResetUserTwoFA(${u.id})">Återställ 2FA</button>`
@@ -1454,13 +1693,14 @@ function renderRoomList(){
     el.innerHTML='<div class="empty"><div class="ico">👤</div><p>Superadmin hanterar inte salar.</p></div>';
     return;
   }
+  const readOnlySchoolAdmin=isSchoolAdminReadOnlyMode();
   const teacherNote=isTeacherUser()
     ?'<p class="hint admin-pick-note">Kryssa i vilka salar du vill kunna använda i Placera-vyn.</p>'
     :'';
   if(!rooms.length){el.innerHTML=`${teacherNote}<div class="empty"><div class="ico">🏫</div><p>Inga salar</p></div>`;return}
   const rows=rooms.map(r=>{
     const deskCount=countPlacedDesks(r);
-    const editable=canEditEntity(r);
+    const editable=canEditEntity(r)&&!readOnlySchoolAdmin;
     const visibility=normalizeVisibility(r.visibility);
     const visibilityTxt=editable?` · ${visibility==='private'?'egen':'delad'}`:'';
     const ownBadge=visibility==='private'?'<span class="room-own-badge">EGEN</span>':'';
@@ -1578,18 +1818,404 @@ async function deleteRoom(id){
   }
 }
 
+function normalizeStudentName(raw){
+  return String(raw??'').replace(/\s+/g,' ').trim();
+}
+
+function uniqueStudentNames(items){
+  const out=[];
+  const seen=new Set();
+  for(const item of Array.isArray(items)?items:[]){
+    const name=normalizeStudentName(item);
+    if(!name||name.toLowerCase()==='undefined')continue;
+    const key=name.toLowerCase();
+    if(seen.has(key))continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
+
+function getClassStudentsFromField(){
+  const field=document.getElementById('class-students-in');
+  if(!field)return [];
+  return uniqueStudentNames(String(field.value||'').split(/\r?\n/));
+}
+
+function setClassStudentsToField(items){
+  const field=document.getElementById('class-students-in');
+  if(!field)return;
+  field.value=uniqueStudentNames(items).join('\n');
+}
+
+function appendClassStudentsToField(items){
+  const existing=getClassStudentsFromField();
+  const merged=uniqueStudentNames([...existing,...(Array.isArray(items)?items:[])]);
+  setClassStudentsToField(merged);
+  return Math.max(0,merged.length-existing.length);
+}
+
+function classImportScoreCol(header,samples){
+  let score=0;
+  const h=String(header||'').toLowerCase().trim();
+  if(CLASS_IMPORT_NAME_KW.some(k=>h===k||h.includes(k)))score+=10;
+  for(const value of samples){
+    const s=normalizeStudentName(value);
+    if(!s||s.toLowerCase()==='undefined')continue;
+    if(/^\d+$/.test(s)){score-=2;continue;}
+    if(/[A-ZÅÄÖ]/.test(s[0])&&s.length>1&&s.length<40)score+=2;
+  }
+  return score;
+}
+
+function classImportAnalyzeRows(rows){
+  if(!Array.isArray(rows)||!rows.length)return null;
+  const cleanRows=rows.map(row=>Array.isArray(row)?row.map(cell=>String(cell??'').trim()):[]);
+  const colCount=Math.max(...cleanRows.map(r=>r.length),0);
+  if(!colCount)return null;
+  const firstRow=(cleanRows[0]||[]).map(c=>String(c||'').trim());
+  const hasHeaders=cleanRows.length>1&&firstRow.every(c=>c&&!/^\d+(\.\d+)?$/.test(c));
+  const headers=hasHeaders?firstRow:Array.from({length:colCount},(_,i)=>`Kolumn ${i+1}`);
+  const dataRows=hasHeaders?cleanRows.slice(1):cleanRows;
+  if(!dataRows.length)return null;
+  const scores=headers.map((header,col)=>({
+    col,
+    header,
+    score:classImportScoreCol(header,dataRows.slice(0,8).map(r=>r[col])),
+    samples:dataRows.slice(0,5).map(r=>String(r[col]??'').trim())
+  }));
+  let firstCol=null;
+  let lastCol=null;
+  if(hasHeaders){
+    headers.forEach((header,col)=>{
+      const hl=String(header||'').toLowerCase();
+      if(CLASS_IMPORT_FIRST_KW.some(k=>hl===k||hl.includes(k)))firstCol=col;
+      if(CLASS_IMPORT_LAST_KW.some(k=>hl===k||hl.includes(k)))lastCol=col;
+    });
+  }
+  const mergeFirstLast=firstCol!==null&&lastCol!==null&&firstCol!==lastCol;
+  const bestCol=[...scores].sort((a,b)=>b.score-a.score)[0]?.col??0;
+  return {hasHeaders,headers,dataRows,scores,bestCol,mergeFirstLast,firstCol,lastCol,colCount};
+}
+
+function classImportParseCSV(text){
+  const rows=[];
+  const lines=String(text||'').split(/\r?\n/);
+  const firstDataLine=lines.find(line=>line.trim())||'';
+  const sep=firstDataLine.includes(';')?';':',';
+  for(const line of lines){
+    if(!line.trim())continue;
+    const cells=[];
+    let cur='';
+    let inQuotes=false;
+    for(let i=0;i<line.length;i++){
+      const ch=line[i];
+      if(ch==='"'){
+        if(inQuotes&&line[i+1]==='"'){
+          cur+='"';
+          i++;
+        }else{
+          inQuotes=!inQuotes;
+        }
+      }else if(ch===sep&&!inQuotes){
+        cells.push(cur.trim());
+        cur='';
+      }else{
+        cur+=ch;
+      }
+    }
+    cells.push(cur.trim());
+    if(cells.some(cell=>cell))rows.push(cells);
+  }
+  return rows;
+}
+
+function classImportParseRowsFromText(text){
+  const raw=String(text||'').replace(/\uFEFF/g,'');
+  if(!raw.trim())return [];
+  const lines=raw.split(/\r?\n/).filter(line=>line.trim());
+  if(lines.some(line=>line.includes('\t'))){
+    return lines.map(line=>line.split('\t').map(cell=>String(cell??'').trim())).filter(row=>row.some(Boolean));
+  }
+  return classImportParseCSV(raw);
+}
+
+function classImportDecodeFileBuffer(buffer){
+  const bytes=new Uint8Array(buffer);
+  if(bytes.length>=3&&bytes[0]===0xEF&&bytes[1]===0xBB&&bytes[2]===0xBF){
+    return new TextDecoder('utf-8').decode(bytes.subarray(3));
+  }
+  if(bytes.length>=2&&bytes[0]===0xFF&&bytes[1]===0xFE){
+    return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  }
+  if(bytes.length>=2&&bytes[0]===0xFE&&bytes[1]===0xFF){
+    return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+  }
+  try{
+    return new TextDecoder('utf-8',{fatal:true}).decode(buffer);
+  }catch{
+    try{return new TextDecoder('windows-1252').decode(buffer);}
+    catch{return new TextDecoder('iso-8859-1').decode(buffer);}
+  }
+}
+
+function classImportCommitRows(analysis,selectedCols){
+  if(!analysis||!Array.isArray(selectedCols)||!selectedCols.length)return 0;
+  const names=[];
+  for(const row of analysis.dataRows){
+    const parts=selectedCols
+      .map(col=>normalizeStudentName(row[col]??''))
+      .filter(part=>part&&part.toLowerCase()!=='undefined');
+    const full=normalizeStudentName(parts.join(' '));
+    if(full)names.push(full);
+  }
+  return appendClassStudentsToField(names);
+}
+
+function showClassImportModal(filename,analysis){
+  if(!analysis)return;
+  const {headers,dataRows,scores,mergeFirstLast,firstCol,lastCol,colCount,hasHeaders}=analysis;
+  const initialSelection=mergeFirstLast?[firstCol,lastCol].sort((a,b)=>a-b):[analysis.bestCol];
+  classImportPending={analysis,filename,selected:[...initialSelection]};
+
+  const cards=scores.map(({col,header,samples})=>{
+    const badge=col===firstCol?'<span class="ci-badge ci-badge-first">Förnamn</span>'
+      :col===lastCol?'<span class="ci-badge ci-badge-last">Efternamn</span>'
+      :'';
+    const sampleHtml=samples
+      .filter(Boolean)
+      .slice(0,3)
+      .map(sample=>`<span class="ci-sample">${escH(sample)}</span>`)
+      .join('')||'<span class="ci-sample ci-sample-muted">-</span>';
+    return `<div class="ci-col-card${initialSelection.includes(col)?' selected':''}" data-col="${col}" onclick="toggleClassImportCol(${col})">
+      <div class="ci-col-head"><span class="ci-col-name">${escH(header)}</span>${badge}</div>
+      <div class="ci-col-samples">${sampleHtml}</div>
+    </div>`;
+  }).join('');
+
+  const previewRows=dataRows.slice(0,5).map(row=>
+    `<tr>${headers.map((_,i)=>`<td>${escH(String(row[i]??'').trim())}</td>`).join('')}</tr>`
+  ).join('');
+
+  const body=document.getElementById('class-import-modal-body');
+  if(!body)return;
+  body.innerHTML=`
+    <div class="ci-filename">${escH(filename)}</div>
+    <div class="ci-meta">${hasHeaders?'Rubriker hittades':'Inga rubriker'} · ${colCount} kolumn${colCount!==1?'er':''} · ${dataRows.length} rader</div>
+    <div class="ci-hint">Klicka för att välja kolumn(er). Flera kolumner slås ihop med mellanslag.</div>
+    <div class="ci-merge-note" id="class-import-merge-note"></div>
+    <div class="ci-col-cards" id="class-import-col-cards">${cards}</div>
+    <div class="ci-preview-wrap"><table class="ci-preview">
+      <thead><tr>${headers.map(header=>`<th>${escH(header)}</th>`).join('')}</tr></thead>
+      <tbody>${previewRows}</tbody>
+    </table></div>
+  `;
+  openModal('class-import-modal');
+  updateClassImportMergeNote();
+}
+
+function updateClassImportMergeNote(){
+  const note=document.getElementById('class-import-merge-note');
+  if(!note||!classImportPending)return;
+  const selected=classImportPending.selected;
+  if(selected.length>1){
+    const cols=selected.map(col=>`"${classImportPending.analysis.headers[col]}"`).join(' + ');
+    note.textContent=`${cols} slås ihop med mellanslag`;
+    note.style.display='block';
+  }else{
+    note.style.display='none';
+    note.textContent='';
+  }
+}
+
+function toggleClassImportCol(col){
+  if(!classImportPending)return;
+  const selected=classImportPending.selected;
+  const idx=selected.indexOf(col);
+  if(idx===-1){
+    selected.push(col);
+  }else if(selected.length>1){
+    selected.splice(idx,1);
+  }
+  selected.sort((a,b)=>a-b);
+  document.querySelectorAll('#class-import-col-cards .ci-col-card').forEach(card=>{
+    card.classList.toggle('selected',selected.includes(Number(card.dataset.col)));
+  });
+  updateClassImportMergeNote();
+}
+
+function clearClassImportState(){
+  classImportPending=null;
+  const body=document.getElementById('class-import-modal-body');
+  if(body)body.innerHTML='';
+}
+
+function closeClassImportModal(){
+  clearClassImportState();
+  closeModal('class-import-modal');
+}
+
+function confirmClassImport(){
+  if(!classImportPending)return;
+  const {analysis,selected,filename}=classImportPending;
+  const added=classImportCommitRows(analysis,selected);
+  if(added>0){
+    showToast(`✓ ${filename} importerad (${added} nya namn)`);
+  }else{
+    showToast('Inga nya namn att importera.');
+  }
+  closeClassImportModal();
+}
+
+function importStudentsFromRows(sourceName,rows){
+  const analysis=classImportAnalyzeRows(rows);
+  if(!analysis){
+    notifyError('Ingen data att importera.');
+    return;
+  }
+  if(analysis.colCount===1&&!analysis.hasHeaders){
+    const added=classImportCommitRows(analysis,[0]);
+    if(added>0){
+      showToast(`✓ ${sourceName} importerad (${added} nya namn)`);
+    }else{
+      showToast('Inga nya namn att importera.');
+    }
+    return;
+  }
+  showClassImportModal(sourceName,analysis);
+}
+
+function triggerClassImportFile(){
+  const fileInput=document.getElementById('class-import-file');
+  if(fileInput)fileInput.click();
+}
+
+function importStudentsFromTextarea(){
+  const field=document.getElementById('class-students-in');
+  const text=String(field?.value||'');
+  if(!text.trim()){
+    notifyError('Textfältet är tomt.');
+    return;
+  }
+  importStudentsFromRows('Text',classImportParseRowsFromText(text));
+}
+
+async function ensureClassImportXLSX(){
+  if(window.XLSX)return window.XLSX;
+  if(classImportXlsxLoader)return classImportXlsxLoader;
+  classImportXlsxLoader=new Promise((resolve,reject)=>{
+    const script=document.createElement('script');
+    script.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    script.async=true;
+    script.onload=()=>resolve(window.XLSX);
+    script.onerror=()=>reject(new Error('xlsx_load_failed'));
+    document.head.appendChild(script);
+  });
+  return classImportXlsxLoader;
+}
+
+function handleClassImportFile(file){
+  if(!file)return;
+  const ext=String(file.name||'').split('.').pop().toLowerCase();
+  const reader=new FileReader();
+
+  if(ext==='json'){
+    reader.onload=e=>{
+      try{
+        const text=classImportDecodeFileBuffer(e.target.result);
+        const data=JSON.parse(text);
+        if(Array.isArray(data)&&data.length&&data[0]!==null&&typeof data[0]==='object'){
+          const headers=Object.keys(data[0]);
+          const rows=[headers,...data.map(item=>headers.map(key=>item[key]??''))];
+          importStudentsFromRows(file.name,rows);
+          return;
+        }
+        const flat=Array.isArray(data)?data:Object.values(data).flat();
+        const added=appendClassStudentsToField(flat.map(v=>String(v??'')));
+        if(added>0)showToast(`✓ ${file.name} importerad (${added} nya namn)`);
+        else showToast('Inga nya namn att importera.');
+      }catch{
+        notifyError('Ogiltig JSON-fil.');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    return;
+  }
+
+  if(ext==='txt'){
+    reader.onload=e=>{
+      const text=classImportDecodeFileBuffer(e.target.result);
+      importStudentsFromRows(file.name,classImportParseRowsFromText(text));
+    };
+    reader.readAsArrayBuffer(file);
+    return;
+  }
+
+  if(ext==='csv'){
+    reader.onload=e=>{
+      const text=classImportDecodeFileBuffer(e.target.result);
+      importStudentsFromRows(file.name,classImportParseCSV(text));
+    };
+    reader.readAsArrayBuffer(file);
+    return;
+  }
+
+  if(ext==='xlsx'||ext==='xls'){
+    reader.onload=async e=>{
+      try{
+        await ensureClassImportXLSX();
+        const workbook=window.XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+        const rows=window.XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]],{header:1,defval:''});
+        importStudentsFromRows(file.name,rows);
+      }catch{
+        notifyError('Kunde inte läsa Excel-filen.');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    return;
+  }
+
+  notifyError('Filformat stöds inte.');
+}
+
+function bindClassImportInteractions(){
+  if(classImportBindingsReady)return;
+  const fileInput=document.getElementById('class-import-file');
+  const dropZone=document.getElementById('class-import-dropzone');
+  if(!fileInput||!dropZone)return;
+
+  fileInput.addEventListener('change',e=>{
+    Array.from(e.target.files||[]).forEach(handleClassImportFile);
+    e.target.value='';
+  });
+
+  dropZone.addEventListener('dragover',e=>{
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop',e=>{
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    Array.from(e.dataTransfer?.files||[]).forEach(handleClassImportFile);
+  });
+
+  classImportBindingsReady=true;
+}
+
 function renderClassList(){
   const classes=getClasses(),el=document.getElementById('class-list');
   if(isSuperAdminUser()){
     el.innerHTML='<div class="empty"><div class="ico">👤</div><p>Superadmin hanterar inte grupper.</p></div>';
     return;
   }
+  const readOnlySchoolAdmin=isSchoolAdminReadOnlyMode();
   const teacherNote=isTeacherUser()
     ?'<p class="hint admin-pick-note">Kryssa i vilka grupper du vill kunna använda i Placera-vyn.</p>'
     :'';
   if(!classes.length){el.innerHTML=`${teacherNote}<div class="empty"><div class="ico">👥</div><p>Inga grupper</p></div>`;return}
   const rows=classes.map(c=>{
-    const editable=canEditEntity(c);
+    const editable=canEditEntity(c)&&!readOnlySchoolAdmin;
     const visibility=normalizeVisibility(c.visibility);
     const visibilityTxt=editable?` · ${visibility==='private'?'egen':'delad'}`:'';
     const ownBadge=visibility==='private'?'<span class="room-own-badge">EGEN</span>':'';
@@ -1620,13 +2246,15 @@ function openClassModal(id){
   document.getElementById('class-name-in').value=cls?cls.name:'';
   document.getElementById('class-visibility-in').value=cls?normalizeVisibility(cls.visibility):'shared';
   document.getElementById('class-students-in').value=cls?cls.students.join('\n'):'';
+  clearClassImportState();
+  bindClassImportInteractions();
   openModal('class-modal');
 }
 async function saveClass(){
   const name=document.getElementById('class-name-in').value.trim();
   const visibility=normalizeVisibility(document.getElementById('class-visibility-in').value);
   if(!name){notifyError('Ange ett namn.');return}
-  const students=document.getElementById('class-students-in').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const students=getClassStudentsFromField();
   if(!students.length){notifyError('Lägg till minst en elev.');return}
   const existing=editingClassId?getClasses().find(c=>c.id===editingClassId):null;
   if(existing&&!canEditEntity(existing)){
@@ -2442,6 +3070,7 @@ function openModal(id){
 function closeModal(id){
   const overlay=document.getElementById(id);
   if(!overlay)return;
+  if(id==='class-import-modal')clearClassImportState();
   overlay.classList.add('hidden');
   const openOverlay=document.querySelector('.overlay:not(.hidden)');
   if(!openOverlay)document.body.style.overflow='';

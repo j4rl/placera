@@ -166,16 +166,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $status = (string)($row['status'] ?? '');
                 $role = (string)($row['role'] ?? '');
+                $isSchoolAdmin = $role === 'school_admin';
                 $schoolId = (int)($row['school_id'] ?? 0);
                 $schoolStatus = (string)($row['school_status'] ?? '');
                 $schoolRequire2FA = (int)($row['school_require_2fa'] ?? 0) === 1;
                 $twofaEnabled = (int)($row['twofa_enabled'] ?? 0) === 1;
-                $requires2FA = $twofaEnabled || ($role !== 'superadmin' && $schoolRequire2FA);
+                $schoolApproved = $schoolId > 0 && $schoolStatus === 'approved';
+                $enforceSchool2FA = $schoolRequire2FA && !($isSchoolAdmin && !$schoolApproved);
+                $requires2FA = $twofaEnabled || ($role !== 'superadmin' && $enforceSchool2FA);
 
                 if ($status !== 'approved') {
                     $err = 'Kontot är inte längre aktivt.';
                     plc_clear_login_2fa_state();
-                } elseif ($role !== 'superadmin' && ($schoolId <= 0 || $schoolStatus !== 'approved')) {
+                } elseif ($role !== 'superadmin' && $schoolId <= 0) {
+                    $err = 'Konto saknar koppling till en skola.';
+                    plc_clear_login_2fa_state();
+                } elseif ($role !== 'superadmin' && !$schoolApproved && !$isSchoolAdmin) {
                     $err = 'Skolan är inte godkänd ännu.';
                     plc_clear_login_2fa_state();
                 } elseif (!$requires2FA) {
@@ -257,16 +263,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $err = 'Kontot är avstängt.';
                 } else {
                     $role = (string)($row['role'] ?? '');
+                    $isSchoolAdmin = $role === 'school_admin';
                     $schoolId = (int)($row['school_id'] ?? 0);
                     $schoolStatus = (string)($row['school_status'] ?? '');
                     $schoolRequire2FA = (int)($row['school_require_2fa'] ?? 0) === 1;
                     $twofaEnabled = (int)($row['twofa_enabled'] ?? 0) === 1;
-                    if ($role !== 'superadmin' && ($schoolId <= 0 || $schoolStatus !== 'approved')) {
+                    $schoolApproved = $schoolId > 0 && $schoolStatus === 'approved';
+                    if ($role !== 'superadmin' && $schoolId <= 0) {
+                        plc_login_slowdown();
+                        plc_login_register_failure($throttleKey);
+                        $err = 'Konto saknar koppling till en skola.';
+                    } elseif ($role !== 'superadmin' && !$schoolApproved && !$isSchoolAdmin) {
                         plc_login_slowdown();
                         plc_login_register_failure($throttleKey);
                         $err = 'Skolan är inte godkänd ännu.';
                     } else {
-                        $requires2FA = $twofaEnabled || ($role !== 'superadmin' && $schoolRequire2FA);
+                        $enforceSchool2FA = $schoolRequire2FA && !($isSchoolAdmin && !$schoolApproved);
+                        $requires2FA = $twofaEnabled || ($role !== 'superadmin' && $enforceSchool2FA);
                         if ($requires2FA) {
                             if ($twofaEnabled) {
                                 $_SESSION['plc_2fa_login_user_id'] = (int)$row['id'];

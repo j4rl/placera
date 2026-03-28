@@ -12,6 +12,8 @@ if (!plc_is_school_admin($user)) {
 }
 
 $schoolId = plc_user_school_id($user);
+$schoolStatus = (string)($user['school_status'] ?? '');
+$isSchoolAdminReadOnly = plc_is_school_admin($user) && $schoolStatus !== 'approved';
 if ($schoolId <= 0) {
     plc_json(['ok' => false, 'error' => 'invalid_school'], 400);
 }
@@ -46,6 +48,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     plc_json(['ok' => false, 'error' => 'method_not_allowed'], 405);
+}
+
+if ($isSchoolAdminReadOnly) {
+    plc_json([
+        'ok' => false,
+        'error' => 'forbidden',
+        'message' => 'Skolan är inte godkänd ännu. Skoladmin kan logga in men inte utföra åtgärder.',
+    ], 403);
 }
 
 plc_verify_csrf_or_403();

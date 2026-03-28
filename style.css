@@ -551,6 +551,188 @@ hr {
   background: var(--surface2)
 }
 
+.class-import-zone {
+  position: relative;
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  background: var(--surface2);
+  padding: 16px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 78px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+
+.class-import-zone:hover,
+.class-import-zone.drag-over {
+  border-color: var(--accent2);
+  background: var(--surface3);
+}
+
+.class-import-zone:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
+}
+
+.class-import-zone input[type="file"] {
+  display: none;
+}
+
+.class-import-icon {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.class-import-text {
+  font-size: .78rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.class-import-text strong {
+  color: var(--text);
+}
+
+.class-import-modal {
+  width: min(96vw, 920px);
+}
+
+.ci-filename {
+  font-size: .86rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.ci-meta {
+  font-size: .75rem;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.ci-hint {
+  font-size: .72rem;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.ci-merge-note {
+  display: none;
+  font-size: .72rem;
+  color: var(--accent2);
+  margin-bottom: 10px;
+}
+
+.ci-col-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ci-col-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface2);
+  padding: 9px 10px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+
+.ci-col-card:hover {
+  border-color: var(--accent2);
+}
+
+.ci-col-card.selected {
+  border-color: var(--accent2);
+  background: rgba(24, 120, 160, .12);
+}
+
+.ci-col-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.ci-col-name {
+  font-size: .78rem;
+  font-weight: 700;
+}
+
+.ci-badge {
+  font-size: .62rem;
+  line-height: 1;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface3);
+  color: var(--muted);
+  padding: 4px 6px;
+}
+
+.ci-badge-first {
+  color: var(--accent2);
+  border-color: var(--accent2);
+}
+
+.ci-badge-last {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.ci-col-samples {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ci-sample {
+  font-size: .68rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 2px 7px;
+}
+
+.ci-sample-muted {
+  color: var(--muted);
+}
+
+.ci-preview-wrap {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: auto;
+  max-height: 280px;
+}
+
+.ci-preview {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .74rem;
+}
+
+.ci-preview th,
+.ci-preview td {
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.ci-preview th:last-child,
+.ci-preview td:last-child {
+  border-right: none;
+}
+
+.ci-preview th {
+  position: sticky;
+  top: 0;
+  background: var(--surface3);
+}
+
 /* HOME */
 .home-hero {
   text-align: center;
@@ -1011,6 +1193,92 @@ hr {
 
 .list-item:hover {
   border-color: var(--accent2)
+}
+
+.school-details {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface2);
+  margin-bottom: 10px;
+}
+
+.school-details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 14px;
+  display: block;
+}
+
+.school-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.school-details-body {
+  border-top: 1px solid var(--border);
+  padding: 12px 14px;
+}
+
+.school-summary-main {
+  display: inline;
+  font-family: var(--fh);
+  font-weight: 800;
+  font-size: 120%;
+}
+
+.school-summary-meta {
+  display: inline;
+  font-size: .72rem;
+  color: var(--muted);
+  margin-left: 8px;
+}
+
+.school-status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .62rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  padding: 3px 7px;
+}
+
+.school-status-pending {
+  color: #124b9f;
+  border-color: #4f89d4;
+  background: #e5f1ff;
+}
+
+.school-status-approved {
+  color: #2c6f12;
+  border-color: #7fbf60;
+  background: #e7f6dd;
+}
+
+.school-status-disabled {
+  color: #8d1e1e;
+  border-color: #c76b6b;
+  background: #fde8e8;
+}
+
+.school-status-rejected {
+  color: #8d1e1e;
+  border-color: #c76b6b;
+  background: #fde8e8;
+}
+
+.school-admin-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.school-admin-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface);
 }
 
 .li-name {

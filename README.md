@@ -1,27 +1,45 @@
 # Placera
 
-Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare att snabbt skapa, slumpa, justera, spara och skriva ut elevplaceringar i olika salar.
+Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare att snabbt skapa, slumpa, justera, spara och skriva ut elevplaceringar i olika salar, med stöd för flera skolor i samma installation.
 
 ## Vem appen är till för
 
 - Lärare som behöver skapa och hantera sittplatser på ett snabbt och tydligt sätt.
 - Arbetslag och ämneslag som vill kunna återanvända salar och placeringar.
-- Skoladministratörer som vill styra vilka användare som får tillgång till systemet.
+- Skoladministratörer som vill styra vilka användare som får tillgång till systemet på sin egen skola.
+- Superadmin som hanterar skolor och användarbehörigheter mellan skolor.
 
 ## Vad appen gör
 
 - Hanterar grupper och elevlistor.
+- Importerar elevnamn till grupper från text/CSV/JSON/Excel med kolumnval och förhandsvisning.
 - Hanterar salar och bänkplaceringar via visuell editor.
 - Slumpar placeringar automatiskt utifrån vald grupp och sal.
 - Låter användaren finjustera placeringar manuellt.
 - Sparar placeringar för senare användning.
 - Ger möjlighet till direktutskrift och nedladdning som PDF.
 
+## Roller och skolor
+
+- `teacher`: kan använda och hantera grupper/salar/placeringar inom sin skola enligt behörighet.
+- `school_admin`: hanterar användare på sin egen skola.
+- `superadmin`: hanterar användare och skolor globalt (inte grupper eller salar).
+- Varje användare tillhör en skola (förutom superadmin).
+- Data isoleras per skola så att användare arbetar inom sin egen skolkontext.
+- Superadmin har en separat skolöversikt där skolor kan godkännas, sättas väntande, avslås eller inaktiveras.
+- Endast skolor med status `Godkänd` tillåter vanliga användare att logga in.
+- Skoladmin kan logga in även när skolan inte är godkänd, men då i read-only-läge utan åtgärder.
+
 ## Användar- och säkerhetsflöde
 
 - Nya användare skickar en ansökan om konto.
-- Admin godkänner eller avslår ansökningar.
-- Godkända användare kan logga in och använda verktyget.
+- Skoladmin och superadmin kan godkänna/avslå ansökningar enligt behörighet.
+- Superadmin kan godkänna skoladmins och skolor.
+- Godkända användare på godkända skolor kan logga in och använda verktyget.
+- Frivillig 2FA för användare (TOTP).
+- Skola kan tvinga 2FA för alla användare via skolinställning.
+- Backupkoder för 2FA finns för återinloggning vid förlorad enhet.
+- Glömt lösenord-flöde finns med återställningstoken.
 - Systemet sparar vem som skapat eller uppdaterat salar och placeringar, samt när det gjordes.
 - Elevnamn i grupper och sparade placeringar krypteras i databasen.
 
@@ -34,6 +52,20 @@ Koden är öppen källkod och finns tillgänglig på GitHub.
 ---
 
 ## Uppdateringar
+
+### 2026-03-28
+
+- Ändring: Fullt stöd för flera skolor med isolering mellan skolor.
+- Ändring: Ny global roll `superadmin` för att hantera användare och skolor.
+- Ändring: Superadmin-dashboard med sektionen `Skolor` (details/summary) som visar status, användarantal och skoladmins.
+- Ändring: Färgkodning för skolstatus i skol-listan: `Godkänd` grön, `Väntande` blå, `Avslagen`/`Inaktiverad` röd.
+- Ändring: Endast användare på `Godkänd` skola kan logga in; skoladmin kan logga in read-only om skolan inte är godkänd.
+- Ändring: Frivillig 2FA för användare samt möjlighet för skoladmin att kräva 2FA för hela skolan.
+- Ändring: Backupkoder för 2FA tillagda.
+- Ändring: Glömt lösenord / lösenordsåterställning tillagd.
+- Ändring: Gruppimport förbättrad med stöd för text/CSV/JSON/Excel och bättre namntolkning.
+- Ändring: Superadmin kan radera skolor med status `Avslagen`; då raderas skolans användare och kopplad data.
+- Ändring: Radering av `Avslagen` skola kräver extra bekräftelse där skolnamnet måste skrivas in.
 
 ### 2026-03-24
 

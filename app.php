@@ -34,6 +34,8 @@ $isSuperAdmin = ($userRole === 'superadmin');
 $isUserAdmin = ($isSuperAdmin || $userRole === 'school_admin');
 $manageViewLabel = $isUserAdmin ? 'Admin' : 'Hantera';
 $managePanelLabel = $isSuperAdmin ? 'Superadmin' : ($isUserAdmin ? 'Administration' : 'Hantera');
+$headerSchoolSuffix = trim((string)($user['school_name'] ?? ''));
+$headerSchoolSuffix = $headerSchoolSuffix !== '' ? ' - ' . $headerSchoolSuffix : '';
 ?>
 <!DOCTYPE html>
 <html lang="sv">
@@ -47,7 +49,7 @@ $managePanelLabel = $isSuperAdmin ? 'Superadmin' : ($isUserAdmin ? 'Administrati
 <body>
 
 <header>
-  <div class="logo">Grupp<span>placering</span></div>
+  <div class="logo">Grupp<span>placering</span><span id="logo-school-name"><?= htmlspecialchars($headerSchoolSuffix, ENT_QUOTES, 'UTF-8') ?></span></div>
   <nav class="main-nav">
     <?php if (!$isSuperAdmin): ?>
     <button type="button" class="nav-btn active" data-view="home" onclick="showView('home')">Placera</button>
@@ -260,21 +262,22 @@ $managePanelLabel = $isSuperAdmin ? 'Superadmin' : ($isUserAdmin ? 'Administrati
       <button type="button" class="btn btn-secondary" onclick="adminLogout()">Logga ut konto</button>
     </div>
     <div class="atabs">
-      <button type="button" class="atab active" onclick="aTab('rooms')">Salar</button>
-      <button type="button" class="atab" onclick="aTab('classes')">Grupper</button>
-      <button type="button" class="atab" onclick="aTab('users')">Användare</button>
+      <button type="button" class="atab active" id="atab-rooms" data-tab="rooms" onclick="aTab('rooms')">Salar</button>
+      <button type="button" class="atab" id="atab-classes" data-tab="classes" onclick="aTab('classes')">Grupper</button>
+      <button type="button" class="atab" id="atab-users" data-tab="users" onclick="aTab('users')">Användare</button>
+      <button type="button" class="atab" id="atab-schools" data-tab="schools" onclick="aTab('schools')">Skolor</button>
     </div>
     <div class="asec active" id="asec-rooms">
       <div class="flex gap3" style="align-items:center;justify-content:space-between;margin-bottom:14px">
         <span class="card-title" style="margin:0">Sparade salar</span>
-        <button type="button" class="btn btn-primary btn-sm" onclick="openEditor(null)">+ Ny sal</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-new-room" onclick="openEditor(null)">+ Ny sal</button>
       </div>
       <div id="room-list"></div>
     </div>
     <div class="asec" id="asec-classes">
       <div class="flex gap3" style="align-items:center;justify-content:space-between;margin-bottom:14px">
         <span class="card-title" style="margin:0">Sparade grupper</span>
-        <button type="button" class="btn btn-primary btn-sm" onclick="openClassModal(null)">+ Ny grupp</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-new-class" onclick="openClassModal(null)">+ Ny grupp</button>
       </div>
       <div id="class-list"></div>
     </div>
@@ -299,6 +302,13 @@ $managePanelLabel = $isSuperAdmin ? 'Superadmin' : ($isUserAdmin ? 'Administrati
         <div class="card-title">Befintliga användare</div>
         <p class="hint" style="margin-bottom:10px">Hantera roller och kontostatus för godkända användare.</p>
         <div id="existing-users-list"></div>
+      </div>
+    </div>
+    <div class="asec" id="asec-schools">
+      <div class="card">
+        <div class="card-title">Skolor</div>
+        <p class="hint" style="margin-bottom:10px">Visa och hantera skolstatus, skoladmin och användarantal per skola.</p>
+        <div id="schools-list"></div>
       </div>
     </div>
   </div>
@@ -369,6 +379,37 @@ $managePanelLabel = $isSuperAdmin ? 'Superadmin' : ($isUserAdmin ? 'Administrati
   <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
     <button type="button" class="btn btn-secondary" onclick="closeModal('admin-user-modal')">Avbryt</button>
     <button type="button" class="btn btn-primary" onclick="saveAdminUserEdit()">Spara användare</button>
+  </div>
+</div>
+</div>
+
+<!-- ADMIN SCHOOL MODAL -->
+<div class="overlay hidden" id="admin-school-modal">
+<div class="modal" style="width:min(96vw,520px)">
+  <button type="button" class="modal-close" onclick="closeModal('admin-school-modal')" aria-label="Stäng dialog">✕</button>
+  <div class="modal-title">Redigera skola</div>
+  <input type="hidden" id="admin-school-id">
+  <div class="fg">
+    <label>Skolnamn</label>
+    <input type="text" id="admin-school-name" autocomplete="off">
+  </div>
+  <div class="fg">
+    <label>Status</label>
+    <select id="admin-school-status">
+      <option value="pending">Väntande</option>
+      <option value="approved">Godkänd</option>
+      <option value="rejected">Avslagen</option>
+      <option value="disabled">Inaktiverad</option>
+    </select>
+  </div>
+  <label class="editor-check" style="margin-bottom:10px">
+    <input type="checkbox" id="admin-school-require-2fa">
+    Kräv 2FA för alla användare på skolan
+  </label>
+  <p class="hint" id="admin-school-meta"></p>
+  <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
+    <button type="button" class="btn btn-secondary" onclick="closeModal('admin-school-modal')">Avbryt</button>
+    <button type="button" class="btn btn-primary" onclick="saveAdminSchoolEdit()">Spara skola</button>
   </div>
 </div>
 </div>
@@ -498,9 +539,38 @@ $managePanelLabel = $isSuperAdmin ? 'Superadmin' : ($isUserAdmin ? 'Administrati
     <textarea id="class-students-in" style="height:200px;resize:vertical" placeholder="Anna Andersson&#10;Erik Eriksson&#10;Sara Svensson&#10;…"></textarea>
     <p class="hint">Klistra in en lista eller skriv ett namn per rad.</p>
   </div>
+  <div class="fg">
+    <label>Importera elevlista</label>
+    <div class="class-import-zone" id="class-import-dropzone" role="button" tabindex="0" onclick="triggerClassImportFile()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();triggerClassImportFile();}">
+      <input type="file" id="class-import-file" accept=".csv,.xlsx,.xls,.json,.txt" multiple>
+      <div class="class-import-icon">📂</div>
+      <div class="class-import-text">
+        <strong>Dra och släpp filer här</strong><br>
+        CSV · Excel · JSON · TXT
+      </div>
+    </div>
+    <div class="flex gap2 mt2" style="flex-wrap:wrap">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="triggerClassImportFile()">Välj fil</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="importStudentsFromTextarea()">Analysera texten ovan</button>
+    </div>
+    <p class="hint">Importerade namn läggs till utan dubbletter.</p>
+  </div>
   <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
     <button type="button" class="btn btn-secondary" onclick="closeModal('class-modal')">Avbryt</button>
     <button type="button" class="btn btn-primary" onclick="saveClass()">Spara grupp</button>
+  </div>
+</div>
+</div>
+
+<!-- CLASS IMPORT ANALYSIS MODAL -->
+<div class="overlay hidden" id="class-import-modal">
+<div class="modal class-import-modal">
+  <button type="button" class="modal-close" onclick="closeClassImportModal()" aria-label="Stäng dialog">✕</button>
+  <div class="modal-title">Importanalys</div>
+  <div id="class-import-modal-body"></div>
+  <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
+    <button type="button" class="btn btn-secondary" onclick="closeClassImportModal()">Avbryt</button>
+    <button type="button" class="btn btn-primary" onclick="confirmClassImport()">Importera</button>
   </div>
 </div>
 </div>
