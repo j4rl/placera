@@ -9,6 +9,13 @@ if (plc_current_user()) {
 
 $err = '';
 $ok = '';
+$old = [
+    'username' => '',
+    'full_name' => '',
+    'email' => '',
+    'school_name' => '',
+    'account_type' => 'teacher',
+];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $csrf = (string)($_POST['_csrf'] ?? '');
@@ -17,13 +24,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $err = 'Ogiltig begäran. Ladda om sidan och försök igen.';
     } else {
         $db = plc_db();
+        plc_ensure_multischool_schema($db);
+
         $username = trim((string)($_POST['username'] ?? ''));
         $fullName = trim((string)($_POST['full_name'] ?? ''));
         $emailRaw = trim((string)($_POST['email'] ?? ''));
         $email = function_exists('mb_strtolower') ? mb_strtolower($emailRaw) : strtolower($emailRaw);
+        $schoolName = trim((string)($_POST['school_name'] ?? ''));
+        $accountType = trim((string)($_POST['account_type'] ?? 'teacher'));
         $password = (string)($_POST['password'] ?? '');
         $password2 = (string)($_POST['password2'] ?? '');
         $fullNameLen = function_exists('mb_strlen') ? mb_strlen($fullName) : strlen($fullName);
+        $schoolNameLen = function_exists('mb_strlen') ? mb_strlen($schoolName) : strlen($schoolName);
+
+        $old = [
+            'username' => $username,
+            'full_name' => $fullName,
+            'email' => $emailRaw,
+            'school_name' => $schoolName,
+            'account_type' => $accountType,
+        ];
 
         if (!preg_match('/^[A-Za-z0-9_.-]{3,50}$/', $username)) {
             $err = 'Användarnamn måste vara 3-50 tecken (A-Z, 0-9, _, -, .).';
@@ -47,24 +67,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $countRow = $countRes->fetch_assoc();
                 $isFirst = ((int)($countRow['c'] ?? 0) === 0);
 
-                $role = $isFirst ? 'admin' : 'teacher';
-                $status = $isFirst ? 'approved' : 'pending';
-                $approvedAt = $isFirst ? date('Y-m-d H:i:s') : null;
-                $hash = password_hash($password, PASSWORD_DEFAULT);
-
-                $stmt = $db->prepare(
-                    'INSERT INTO plc_users (username, full_name, email, password_hash, role, status, approved_by_user_id, approved_at)
-                     VALUES (?, ?, ?, ?, ?, ?, NULL, ?)'
-                );
-                $stmt->bind_param('sssssss', $username, $fullName, $email, $hash, $role, $status, $approvedAt);
-                $stmt->execute();
-                $newId = (int)$db->insert_id;
-
-                if ($isFirst) {
-                    plc_login_user($newId);
-                    plc_redirect('app.php');
+                if (!$isFirst && !in_array($accountType, ['teacher', 'school_admin'], true)) {
+                    $accountType = 'teacher';
                 }
-                plc_redirect('index.php?registered=1');
+                if (!$isFirst && $schoolNameLen < 2) {
+                    $err = 'Ange skolans namn.';
+                } elseif (!$isFirst && $schoolNameLen > 190) {
+                    $err = 'Skolans namn är för långt.';
+                }
+
+                if ($err === '') {
+                    $schoolId = null;
+                    if (!$isFirst) {
+                        $stmt = $db->prepare(
+                            'SELECT id
+                             FROM plc_schools
+                             WHERE LOWER(name) = LOWER(?)
+                             LIMIT 1'
+                        );
+                        $stmt->bind_param('s', $schoolName);
+                        $stmt->execute();
+                        $school = $stmt->get_result()->fetch_assoc();
+                        if ($school) {
+                            $schoolId = (int)$school['id'];
+                        } else {
+                            $schoolStatus = 'pending';
+                            $stmt = $db->prepare(
+                                'INSERT INTO plc_schools (name, status, approved_by_user_id, approved_at)
+                                 VALUES (?, ?, NULL, NULL)'
+                            );
+                            $stmt->bind_param('ss', $schoolName, $schoolStatus);
+                            $stmt->execute();
+                            $schoolId = (int)$db->insert_id;
+                        }
+                    }
+
+                    $role = $isFirst ? 'superadmin' : $accountType;
+                    $status = $isFirst ? 'approved' : 'pending';
+                    $approvedAt = $isFirst ? date('Y-m-d H:i:s') : null;
+                    $hash = password_hash($password, PASSWORD_DEFAULT);
+
+                    if ($isFirst) {
+                        $stmt = $db->prepare(
+                            'INSERT INTO plc_users (
+                                school_id, username, full_name, email, password_hash, role, status, approved_by_user_id, approved_at
+                             ) VALUES (NULL, ?, ?, ?, ?, ?, ?, NULL, ?)'
+                        );
+                        $stmt->bind_param('sssssss', $username, $fullName, $email, $hash, $role, $status, $approvedAt);
+                    } else {
+                        $stmt = $db->prepare(
+                            'INSERT INTO plc_users (
+                                school_id, username, full_name, email, password_hash, role, status, approved_by_user_id, approved_at
+                             ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)'
+                        );
+                        $stmt->bind_param('isssssss', $schoolId, $username, $fullName, $email, $hash, $role, $status, $approvedAt);
+                    }
+                    $stmt->execute();
+                    $newId = (int)$db->insert_id;
+
+                    if ($isFirst) {
+                        plc_login_user($newId);
+                        plc_redirect('app.php');
+                    }
+                    plc_redirect('index.php?registered=1');
+                }
             }
         }
     }
@@ -92,7 +158,7 @@ $csrf = plc_csrf_token();
     p{margin:0 0 16px;color:var(--muted)}
     .fg{margin-bottom:10px}
     label{display:block;font-size:.74rem;color:var(--muted);margin-bottom:4px}
-    input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text)}
+    input,select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text)}
     button{border:0;border-radius:8px;padding:10px 14px;font-weight:600;cursor:pointer;background:var(--accent);color:#111;width:100%}
     .msg{padding:10px 12px;border-radius:8px;font-size:.85rem;margin-bottom:12px}
     .msg.err{background:#fdecec;border:1px solid #e4b1b1;color:#7f1f1f}
@@ -104,7 +170,7 @@ $csrf = plc_csrf_token();
   <div class="wrap">
     <div class="card">
       <h1>Skicka registreringsansökan</h1>
-      <p>Ansökan granskas av admin innan kontot aktiveras.</p>
+      <p>Ansökan granskas innan kontot aktiveras.</p>
       <?php if ($err !== ''): ?>
         <div class="msg err"><?= htmlspecialchars($err, ENT_QUOTES, 'UTF-8') ?></div>
       <?php endif; ?>
@@ -115,15 +181,26 @@ $csrf = plc_csrf_token();
         <input type="hidden" name="_csrf" value="<?= htmlspecialchars($csrf, ENT_QUOTES, 'UTF-8') ?>">
         <div class="fg">
           <label>Användarnamn</label>
-          <input type="text" name="username" required>
+          <input type="text" name="username" value="<?= htmlspecialchars($old['username'], ENT_QUOTES, 'UTF-8') ?>" required>
         </div>
         <div class="fg">
           <label>Riktigt namn</label>
-          <input type="text" name="full_name" required>
+          <input type="text" name="full_name" value="<?= htmlspecialchars($old['full_name'], ENT_QUOTES, 'UTF-8') ?>" required>
         </div>
         <div class="fg">
           <label>E-post</label>
-          <input type="email" name="email" required>
+          <input type="email" name="email" value="<?= htmlspecialchars($old['email'], ENT_QUOTES, 'UTF-8') ?>" required>
+        </div>
+        <div class="fg">
+          <label>Skola</label>
+          <input type="text" name="school_name" value="<?= htmlspecialchars($old['school_name'], ENT_QUOTES, 'UTF-8') ?>" required>
+        </div>
+        <div class="fg">
+          <label>Kontotyp</label>
+          <select name="account_type">
+            <option value="teacher" <?= $old['account_type'] === 'teacher' ? 'selected' : '' ?>>Lärare</option>
+            <option value="school_admin" <?= $old['account_type'] === 'school_admin' ? 'selected' : '' ?>>Skoladmin</option>
+          </select>
         </div>
         <div class="fg">
           <label>Lösenord</label>
@@ -135,7 +212,7 @@ $csrf = plc_csrf_token();
         </div>
         <button type="submit">Skicka ansökan</button>
       </form>
-      <a class="back" href="index.php">← Tillbaka till inloggning</a>
+      <a class="back" href="index.php">Tillbaka till inloggning</a>
     </div>
   </div>
 </body>

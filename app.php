@@ -3,6 +3,16 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/includes/auth.php';
 $user = plc_require_login(false);
+function plc_role_label_sv(string $role): string
+{
+  if ($role === 'superadmin') {
+    return 'Superadmin';
+  }
+  if ($role === 'school_admin') {
+    return 'Skoladmin';
+  }
+  return 'Lärare';
+}
 $boot = [
   'csrf' => plc_csrf_token(),
   'user' => [
@@ -11,11 +21,19 @@ $boot = [
     'fullName' => $user['full_name'],
     'email' => $user['email'],
     'role' => $user['role'],
+    'roleLabel' => plc_role_label_sv((string)$user['role']),
+    'schoolId' => (int)($user['school_id'] ?? 0),
+    'schoolName' => (string)($user['school_name'] ?? ''),
+    'schoolStatus' => (string)($user['school_status'] ?? ''),
+    'schoolRequire2FA' => (int)($user['school_require_2fa'] ?? 0) === 1,
+    'twofaEnabled' => (int)($user['twofa_enabled'] ?? 0) === 1,
   ],
 ];
-$isSiteAdmin = (($user['role'] ?? '') === 'admin');
-$manageViewLabel = $isSiteAdmin ? 'Admin' : 'Hantera';
-$managePanelLabel = $isSiteAdmin ? 'Administration' : 'Hantera';
+$userRole = (string)($user['role'] ?? '');
+$isSuperAdmin = ($userRole === 'superadmin');
+$isUserAdmin = ($isSuperAdmin || $userRole === 'school_admin');
+$manageViewLabel = $isUserAdmin ? 'Admin' : 'Hantera';
+$managePanelLabel = $isSuperAdmin ? 'Superadmin' : ($isUserAdmin ? 'Administration' : 'Hantera');
 ?>
 <!DOCTYPE html>
 <html lang="sv">
@@ -31,16 +49,18 @@ $managePanelLabel = $isSiteAdmin ? 'Administration' : 'Hantera';
 <header>
   <div class="logo">Grupp<span>placering</span></div>
   <nav class="main-nav">
-    <button type="button" class="nav-btn active" onclick="showView('home')">Placera</button>
-    <button type="button" class="nav-btn" onclick="showView('saved')">Placeringar</button>
-    <button type="button" class="nav-btn" onclick="showView('admin')"><?= htmlspecialchars($manageViewLabel, ENT_QUOTES, 'UTF-8') ?></button>
-    <button type="button" class="nav-btn" onclick="showView('about')">Om</button>
+    <?php if (!$isSuperAdmin): ?>
+    <button type="button" class="nav-btn active" data-view="home" onclick="showView('home')">Placera</button>
+    <button type="button" class="nav-btn" data-view="saved" onclick="showView('saved')">Placeringar</button>
+    <?php endif; ?>
+    <button type="button" class="nav-btn" data-view="admin" onclick="showView('admin')"><?= htmlspecialchars($manageViewLabel, ENT_QUOTES, 'UTF-8') ?></button>
+    <button type="button" class="nav-btn" data-view="about" onclick="showView('about')">Om</button>
   </nav>
   <div class="header-right">
     <div class="user-pill" id="user-pill">
       <button type="button" class="user-meta-btn" onclick="showView('profile')" title="Min profil" aria-label="Öppna min profil">
         <span class="user-name" id="user-name-text"><?= htmlspecialchars((string)$user['full_name'], ENT_QUOTES, 'UTF-8') ?></span>
-        <span class="user-role" id="user-role-text"><?= htmlspecialchars((string)$user['role'], ENT_QUOTES, 'UTF-8') ?></span>
+        <span class="user-role" id="user-role-text"><?= htmlspecialchars(plc_role_label_sv((string)$user['role']), ENT_QUOTES, 'UTF-8') ?></span>
       </button>
       <a class="btn btn-secondary btn-sm" href="logout.php">Logga ut</a>
     </div>
@@ -182,6 +202,34 @@ $managePanelLabel = $isSiteAdmin ? 'Administration' : 'Hantera';
         <label>E-post</label>
         <input type="email" id="profile-email" autocomplete="email">
       </div>
+      <div class="fg">
+        <label>Skola</label>
+        <input type="text" id="profile-school" readonly>
+      </div>
+      <hr>
+      <div class="card-title" style="margin-top:0">Tvåfaktorsautentisering (2FA)</div>
+      <p class="hint" id="profile-2fa-status" style="margin-bottom:8px">Laddar 2FA-status...</p>
+      <div class="fg" id="profile-2fa-setup-wrap" style="display:none">
+        <label>2FA-hemlighet</label>
+        <input type="text" id="profile-2fa-secret" readonly>
+        <p class="hint">Lägg in hemligheten i en autentiseringsapp (t.ex. Google Authenticator eller 1Password).</p>
+      </div>
+      <div class="fg" id="profile-2fa-code-wrap" style="display:none">
+        <label>Verifieringskod</label>
+        <input type="text" id="profile-2fa-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+      </div>
+      <div class="flex gap2" style="margin-top:8px;flex-wrap:wrap">
+        <button type="button" class="btn btn-secondary btn-sm" id="profile-2fa-start-btn" onclick="startTwoFASetup()">Aktivera 2FA</button>
+        <button type="button" class="btn btn-primary btn-sm" id="profile-2fa-confirm-btn" onclick="confirmTwoFASetup()" style="display:none">Bekräfta 2FA</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="profile-2fa-cancel-btn" onclick="cancelTwoFASetup()" style="display:none">Avbryt setup</button>
+        <button type="button" class="btn btn-danger btn-sm" id="profile-2fa-disable-btn" onclick="disableTwoFA()" style="display:none">Inaktivera 2FA</button>
+      </div>
+      <div class="fg" id="profile-backup-wrap" style="display:none;margin-top:12px">
+        <label>Backupkoder</label>
+        <p class="hint" id="profile-backup-status" style="margin-bottom:8px">Backupkoder kan användas istället för 2FA-kod vid inloggning.</p>
+        <button type="button" class="btn btn-secondary btn-sm" id="profile-backup-generate-btn" onclick="generateBackupCodes()">Skapa nya backupkoder</button>
+        <textarea id="profile-backup-codes" readonly style="margin-top:10px;height:150px;display:none"></textarea>
+      </div>
       <hr>
       <div class="card-title" style="margin-top:0">Byt lösenord (valfritt)</div>
       <div class="fg">
@@ -231,6 +279,17 @@ $managePanelLabel = $isSiteAdmin ? 'Administration' : 'Hantera';
       <div id="class-list"></div>
     </div>
     <div class="asec" id="asec-users">
+      <div class="card" id="school-security-card" style="display:none;margin-bottom:14px">
+        <div class="card-title">Skolsäkerhet</div>
+        <p class="hint" style="margin-bottom:10px">Skoladmin kan kräva att alla på skolan använder 2FA.</p>
+        <label class="editor-check" style="margin-bottom:10px">
+          <input type="checkbox" id="school-require-2fa-toggle">
+          Kräv 2FA för alla användare på skolan
+        </label>
+        <div>
+          <button type="button" class="btn btn-primary btn-sm" onclick="saveSchoolSecuritySettings()">Spara skolinställning</button>
+        </div>
+      </div>
       <div class="card">
         <div class="card-title">Användaransökningar</div>
         <p class="hint" style="margin-bottom:10px">Godkänn eller avslå nya registreringar.</p>
@@ -270,7 +329,8 @@ $managePanelLabel = $isSiteAdmin ? 'Administration' : 'Hantera';
       <label>Roll</label>
       <select id="admin-user-role">
         <option value="teacher">Lärare</option>
-        <option value="admin">Admin</option>
+        <option value="school_admin">Skoladmin</option>
+        <option value="superadmin">Superadmin</option>
       </select>
     </div>
     <div class="fg" style="flex:1">
@@ -282,6 +342,19 @@ $managePanelLabel = $isSiteAdmin ? 'Administration' : 'Hantera';
         <option value="rejected">Avslagen</option>
       </select>
     </div>
+  </div>
+  <div class="fg">
+    <label>Skola</label>
+    <input type="text" id="admin-user-school-name" autocomplete="off">
+  </div>
+  <div class="fg">
+    <label>Skolstatus</label>
+    <select id="admin-user-school-status">
+      <option value="pending">Väntande</option>
+      <option value="approved">Godkänd</option>
+      <option value="rejected">Avslagen</option>
+      <option value="disabled">Inaktiverad</option>
+    </select>
   </div>
   <hr>
   <div class="card-title" style="margin-top:0">Byt lösenord (valfritt)</div>

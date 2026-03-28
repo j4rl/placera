@@ -6,7 +6,47 @@ require_once __DIR__ . '/../includes/crypto.php';
 
 $user = plc_require_login(true);
 $db = plc_db();
+plc_ensure_multischool_schema($db);
 $ownerUserId = (int)$user['id'];
+$actorRole = (string)($user['role'] ?? 'teacher');
+$actorSchoolId = plc_user_school_id($user);
+
+if (plc_is_superadmin($user)) {
+    if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+        plc_json([
+            'ok' => true,
+            'user' => [
+                'id' => (int)$user['id'],
+                'username' => $user['username'],
+                'fullName' => $user['full_name'],
+                'email' => $user['email'],
+                'role' => $user['role'],
+                'roleLabel' => 'Superadmin',
+                'schoolId' => 0,
+                'schoolName' => '',
+                'schoolStatus' => '',
+                'schoolRequire2FA' => false,
+                'twofaEnabled' => (int)($user['twofa_enabled'] ?? 0) === 1,
+            ],
+            'rooms' => [],
+            'classes' => [],
+            'saved' => [],
+        ]);
+    }
+    plc_json([
+        'ok' => false,
+        'error' => 'forbidden',
+        'message' => 'Superadmin hanterar endast användare och skolgodkännanden.',
+    ], 403);
+}
+
+if ($actorSchoolId <= 0) {
+    plc_json([
+        'ok' => false,
+        'error' => 'forbidden',
+        'message' => 'Användaren saknar godkänd skola.',
+    ], 403);
+}
 
 function plc_is_entity_editable(int $actorUserId, int $entityOwnerUserId): bool
 {
@@ -128,14 +168,23 @@ function plc_normalize_public_id_list(array $raw): array
     return $out;
 }
 
-function plc_fetch_external_usage_counts(mysqli $db, int $actorUserId): array
+function plc_fetch_external_usage_counts(mysqli $db, int $actorUserId, int $actorSchoolId): array
 {
     $counts = ['room' => [], 'class' => []];
     if (!plc_teacher_selection_table_exists($db)) {
         return $counts;
     }
 
-    $res = $db->query('SELECT user_id, room_ids_json, class_ids_json FROM plc_teacher_placement_selection');
+    $stmt = $db->prepare(
+        'SELECT ts.user_id, ts.room_ids_json, ts.class_ids_json
+         FROM plc_teacher_placement_selection ts
+         JOIN plc_users u ON u.id = ts.user_id
+         WHERE u.status = \'approved\'
+           AND u.school_id = ?'
+    );
+    $stmt->bind_param('i', $actorSchoolId);
+    $stmt->execute();
+    $res = $stmt->get_result();
     while ($row = $res->fetch_assoc()) {
         $selectionUserId = (int)$row['user_id'];
         if ($selectionUserId === $actorUserId) {
@@ -178,7 +227,7 @@ function plc_fetch_teacher_selected_ids_for_saved(mysqli $db, int $teacherUserId
     return ['roomIds' => $roomIds, 'classIds' => $classIds];
 }
 
-function plc_fetch_rooms(mysqli $db, int $actorUserId, array $roomUsageById = []): array
+function plc_fetch_rooms(mysqli $db, int $actorUserId, int $actorSchoolId, array $roomUsageById = []): array
 {
     $stmt = $db->prepare(
         'SELECT r.owner_user_id, r.public_id, r.name, r.desks_json, r.visibility, r.created_at, r.updated_at,
@@ -189,10 +238,11 @@ function plc_fetch_rooms(mysqli $db, int $actorUserId, array $roomUsageById = []
          JOIN plc_users cu ON cu.id = r.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = r.updated_by_user_id
          WHERE ou.status = \'approved\'
+           AND ou.school_id = ?
            AND (r.owner_user_id = ? OR r.visibility = \'shared\')
          ORDER BY r.created_at DESC'
     );
-    $stmt->bind_param('i', $actorUserId);
+    $stmt->bind_param('ii', $actorSchoolId, $actorUserId);
     $stmt->execute();
     $res = $stmt->get_result();
     $out = [];
@@ -219,7 +269,7 @@ function plc_fetch_rooms(mysqli $db, int $actorUserId, array $roomUsageById = []
     return $out;
 }
 
-function plc_fetch_room_by_public_id(mysqli $db, int $actorUserId, int $entityOwnerUserId, string $publicId): ?array
+function plc_fetch_room_by_public_id(mysqli $db, int $actorUserId, int $actorSchoolId, int $entityOwnerUserId, string $publicId): ?array
 {
     $stmt = $db->prepare(
         'SELECT r.owner_user_id, r.public_id, r.name, r.desks_json, r.visibility, r.created_at, r.updated_at,
@@ -229,16 +279,16 @@ function plc_fetch_room_by_public_id(mysqli $db, int $actorUserId, int $entityOw
          JOIN plc_users ou ON ou.id = r.owner_user_id
          JOIN plc_users cu ON cu.id = r.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = r.updated_by_user_id
-         WHERE r.owner_user_id = ? AND r.public_id = ?
+         WHERE ou.school_id = ? AND r.owner_user_id = ? AND r.public_id = ?
          LIMIT 1'
     );
-    $stmt->bind_param('is', $entityOwnerUserId, $publicId);
+    $stmt->bind_param('iis', $actorSchoolId, $entityOwnerUserId, $publicId);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     if (!$row) {
         return null;
     }
-    $usageCounts = plc_fetch_external_usage_counts($db, $actorUserId);
+    $usageCounts = plc_fetch_external_usage_counts($db, $actorUserId, $actorSchoolId);
     $resolvedOwnerUserId = (int)$row['owner_user_id'];
     $visibility = (string)$row['visibility'] === 'private' ? 'private' : 'shared';
     return [
@@ -259,7 +309,7 @@ function plc_fetch_room_by_public_id(mysqli $db, int $actorUserId, int $entityOw
     ];
 }
 
-function plc_fetch_classes(mysqli $db, int $actorUserId, array $classUsageById = []): array
+function plc_fetch_classes(mysqli $db, int $actorUserId, int $actorSchoolId, array $classUsageById = []): array
 {
     $stmt = $db->prepare(
         'SELECT c.owner_user_id, c.public_id, c.name, c.students_json, c.visibility, c.created_at, c.updated_at,
@@ -270,10 +320,11 @@ function plc_fetch_classes(mysqli $db, int $actorUserId, array $classUsageById =
          JOIN plc_users cu ON cu.id = c.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = c.updated_by_user_id
          WHERE ou.status = \'approved\'
+           AND ou.school_id = ?
            AND (c.owner_user_id = ? OR c.visibility = \'shared\')
          ORDER BY c.created_at DESC'
     );
-    $stmt->bind_param('i', $actorUserId);
+    $stmt->bind_param('ii', $actorSchoolId, $actorUserId);
     $stmt->execute();
     $res = $stmt->get_result();
     $out = [];
@@ -300,7 +351,7 @@ function plc_fetch_classes(mysqli $db, int $actorUserId, array $classUsageById =
     return $out;
 }
 
-function plc_fetch_class_by_public_id(mysqli $db, int $actorUserId, int $entityOwnerUserId, string $publicId): ?array
+function plc_fetch_class_by_public_id(mysqli $db, int $actorUserId, int $actorSchoolId, int $entityOwnerUserId, string $publicId): ?array
 {
     $stmt = $db->prepare(
         'SELECT c.owner_user_id, c.public_id, c.name, c.students_json, c.visibility, c.created_at, c.updated_at,
@@ -310,16 +361,16 @@ function plc_fetch_class_by_public_id(mysqli $db, int $actorUserId, int $entityO
          JOIN plc_users ou ON ou.id = c.owner_user_id
          JOIN plc_users cu ON cu.id = c.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = c.updated_by_user_id
-         WHERE c.owner_user_id = ? AND c.public_id = ?
+         WHERE ou.school_id = ? AND c.owner_user_id = ? AND c.public_id = ?
          LIMIT 1'
     );
-    $stmt->bind_param('is', $entityOwnerUserId, $publicId);
+    $stmt->bind_param('iis', $actorSchoolId, $entityOwnerUserId, $publicId);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     if (!$row) {
         return null;
     }
-    $usageCounts = plc_fetch_external_usage_counts($db, $actorUserId);
+    $usageCounts = plc_fetch_external_usage_counts($db, $actorUserId, $actorSchoolId);
     $resolvedOwnerUserId = (int)$row['owner_user_id'];
     $visibility = (string)$row['visibility'] === 'private' ? 'private' : 'shared';
     return [
@@ -340,9 +391,10 @@ function plc_fetch_class_by_public_id(mysqli $db, int $actorUserId, int $entityO
     ];
 }
 
-function plc_fetch_saved(mysqli $db, int $actorUserId, string $actorRole): array
+function plc_fetch_saved(mysqli $db, int $actorUserId, int $actorSchoolId, string $actorRole): array
 {
     $actorUserIdSql = (string)(int)$actorUserId;
+    $actorSchoolIdSql = (string)(int)$actorSchoolId;
     $whereParts = ["p.owner_user_id = {$actorUserIdSql}"];
 
     if ($actorRole === 'teacher') {
@@ -390,7 +442,9 @@ function plc_fetch_saved(mysqli $db, int $actorUserId, string $actorRole): array
             JOIN plc_users ou ON ou.id = p.owner_user_id
             JOIN plc_users cu ON cu.id = p.created_by_user_id
             LEFT JOIN plc_users uu ON uu.id = p.updated_by_user_id
-            WHERE ou.status = 'approved' AND ({$whereSql})
+            WHERE ou.status = 'approved'
+              AND ou.school_id = {$actorSchoolIdSql}
+              AND ({$whereSql})
             ORDER BY COALESCE(p.saved_at, p.created_at) DESC";
     $res = $db->query($sql);
     $out = [];
@@ -418,7 +472,7 @@ function plc_fetch_saved(mysqli $db, int $actorUserId, string $actorRole): array
     return $out;
 }
 
-function plc_fetch_saved_by_public_id(mysqli $db, int $actorUserId, int $entityOwnerUserId, string $publicId): ?array
+function plc_fetch_saved_by_public_id(mysqli $db, int $actorUserId, int $actorSchoolId, int $entityOwnerUserId, string $publicId): ?array
 {
     $stmt = $db->prepare(
         'SELECT p.owner_user_id, p.public_id, p.name, p.room_name, p.class_name, p.room_public_id, p.class_public_id,
@@ -428,10 +482,10 @@ function plc_fetch_saved_by_public_id(mysqli $db, int $actorUserId, int $entityO
          JOIN plc_users ou ON ou.id = p.owner_user_id
          JOIN plc_users cu ON cu.id = p.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = p.updated_by_user_id
-         WHERE p.owner_user_id = ? AND p.public_id = ?
+         WHERE ou.school_id = ? AND p.owner_user_id = ? AND p.public_id = ?
          LIMIT 1'
     );
-    $stmt->bind_param('is', $entityOwnerUserId, $publicId);
+    $stmt->bind_param('iis', $actorSchoolId, $entityOwnerUserId, $publicId);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     if (!$row) {
@@ -458,7 +512,7 @@ function plc_fetch_saved_by_public_id(mysqli $db, int $actorUserId, int $entityO
     ];
 }
 
-function plc_upsert_room(mysqli $db, int $actorUserId, array $item): ?array
+function plc_upsert_room(mysqli $db, int $actorUserId, int $actorSchoolId, array $item): ?array
 {
     $name = trim((string)($item['name'] ?? ''));
     if ($name === '') {
@@ -505,7 +559,7 @@ function plc_upsert_room(mysqli $db, int $actorUserId, array $item): ?array
         $stmt->execute();
     }
 
-    return plc_fetch_room_by_public_id($db, $actorUserId, $actorUserId, $publicId);
+    return plc_fetch_room_by_public_id($db, $actorUserId, $actorSchoolId, $actorUserId, $publicId);
 }
 
 function plc_delete_room(mysqli $db, int $actorUserId, string $publicId): string
@@ -524,7 +578,7 @@ function plc_delete_room(mysqli $db, int $actorUserId, string $publicId): string
     return $publicId;
 }
 
-function plc_upsert_class(mysqli $db, int $actorUserId, array $item): ?array
+function plc_upsert_class(mysqli $db, int $actorUserId, int $actorSchoolId, array $item): ?array
 {
     $name = trim((string)($item['name'] ?? ''));
     if ($name === '') {
@@ -572,7 +626,7 @@ function plc_upsert_class(mysqli $db, int $actorUserId, array $item): ?array
         $stmt->execute();
     }
 
-    return plc_fetch_class_by_public_id($db, $actorUserId, $actorUserId, $publicId);
+    return plc_fetch_class_by_public_id($db, $actorUserId, $actorSchoolId, $actorUserId, $publicId);
 }
 
 function plc_delete_class(mysqli $db, int $actorUserId, string $publicId): string
@@ -591,7 +645,7 @@ function plc_delete_class(mysqli $db, int $actorUserId, string $publicId): strin
     return $publicId;
 }
 
-function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, array $item): ?array
+function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $actorSchoolId, array $item): ?array
 {
     $name = trim((string)($item['name'] ?? ''));
     if ($name === '') {
@@ -671,7 +725,7 @@ function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, array 
         $stmt->execute();
     }
 
-    return plc_fetch_saved_by_public_id($db, $actorUserId, $ownerUserId, $publicId);
+    return plc_fetch_saved_by_public_id($db, $actorUserId, $actorSchoolId, $ownerUserId, $publicId);
 }
 
 function plc_delete_saved(mysqli $db, int $ownerUserId, string $publicId): string
@@ -690,7 +744,7 @@ function plc_delete_saved(mysqli $db, int $ownerUserId, string $publicId): strin
     return $publicId;
 }
 
-function plc_sync_rooms(mysqli $db, int $ownerUserId, int $actorUserId, array $items): array
+function plc_sync_rooms(mysqli $db, int $ownerUserId, int $actorUserId, int $actorSchoolId, array $items): array
 {
     $existing = [];
     $stmt = $db->prepare('SELECT public_id FROM plc_rooms WHERE owner_user_id = ?');
@@ -757,11 +811,11 @@ function plc_sync_rooms(mysqli $db, int $ownerUserId, int $actorUserId, array $i
         }
     }
 
-    $usageCounts = plc_fetch_external_usage_counts($db, $ownerUserId);
-    return plc_fetch_rooms($db, $ownerUserId, $usageCounts['room']);
+    $usageCounts = plc_fetch_external_usage_counts($db, $ownerUserId, $actorSchoolId);
+    return plc_fetch_rooms($db, $ownerUserId, $actorSchoolId, $usageCounts['room']);
 }
 
-function plc_sync_classes(mysqli $db, int $ownerUserId, int $actorUserId, array $items): array
+function plc_sync_classes(mysqli $db, int $ownerUserId, int $actorUserId, int $actorSchoolId, array $items): array
 {
     $existing = [];
     $stmt = $db->prepare('SELECT public_id FROM plc_classes WHERE owner_user_id = ?');
@@ -829,11 +883,11 @@ function plc_sync_classes(mysqli $db, int $ownerUserId, int $actorUserId, array 
         }
     }
 
-    $usageCounts = plc_fetch_external_usage_counts($db, $ownerUserId);
-    return plc_fetch_classes($db, $ownerUserId, $usageCounts['class']);
+    $usageCounts = plc_fetch_external_usage_counts($db, $ownerUserId, $actorSchoolId);
+    return plc_fetch_classes($db, $ownerUserId, $actorSchoolId, $usageCounts['class']);
 }
 
-function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, string $actorRole, array $items): array
+function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $actorSchoolId, string $actorRole, array $items): array
 {
     $existing = [];
     $stmt = $db->prepare('SELECT public_id FROM plc_placements WHERE owner_user_id = ?');
@@ -933,15 +987,14 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, string $
         }
     }
 
-    return plc_fetch_saved($db, $ownerUserId, $actorRole);
+    return plc_fetch_saved($db, $ownerUserId, $actorSchoolId, $actorRole);
 }
 
 plc_ensure_entity_visibility_columns($db);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     try {
-        $usageCounts = plc_fetch_external_usage_counts($db, $ownerUserId);
-        $actorRole = (string)($user['role'] ?? 'teacher');
+        $usageCounts = plc_fetch_external_usage_counts($db, $ownerUserId, $actorSchoolId);
         $payload = [
             'ok' => true,
             'user' => [
@@ -950,10 +1003,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 'fullName' => $user['full_name'],
                 'email' => $user['email'],
                 'role' => $user['role'],
+                'roleLabel' => plc_is_school_admin($user) ? 'Skoladmin' : 'Lärare',
+                'schoolId' => (int)($user['school_id'] ?? 0),
+                'schoolName' => (string)($user['school_name'] ?? ''),
+                'schoolStatus' => (string)($user['school_status'] ?? ''),
+                'schoolRequire2FA' => (int)($user['school_require_2fa'] ?? 0) === 1,
+                'twofaEnabled' => (int)($user['twofa_enabled'] ?? 0) === 1,
             ],
-            'rooms' => plc_fetch_rooms($db, $ownerUserId, $usageCounts['room']),
-            'classes' => plc_fetch_classes($db, $ownerUserId, $usageCounts['class']),
-            'saved' => plc_fetch_saved($db, $ownerUserId, $actorRole),
+            'rooms' => plc_fetch_rooms($db, $ownerUserId, $actorSchoolId, $usageCounts['room']),
+            'classes' => plc_fetch_classes($db, $ownerUserId, $actorSchoolId, $usageCounts['class']),
+            'saved' => plc_fetch_saved($db, $ownerUserId, $actorSchoolId, $actorRole),
         ];
         plc_json($payload);
     } catch (Throwable $e) {
@@ -969,7 +1028,6 @@ plc_verify_csrf_or_403();
 $body = plc_read_json_body();
 $key = (string)($body['key'] ?? '');
 $action = (string)($body['action'] ?? 'replace');
-$actorRole = (string)($user['role'] ?? 'teacher');
 $value = $body['value'] ?? [];
 if (!is_array($value)) {
     $value = [];
@@ -980,11 +1038,11 @@ $publicId = trim((string)($body['id'] ?? ''));
 try {
     if ($action === 'replace') {
         if ($key === 'rooms') {
-            $items = plc_sync_rooms($db, $ownerUserId, $ownerUserId, $value);
+            $items = plc_sync_rooms($db, $ownerUserId, $ownerUserId, $actorSchoolId, $value);
         } elseif ($key === 'classes') {
-            $items = plc_sync_classes($db, $ownerUserId, $ownerUserId, $value);
+            $items = plc_sync_classes($db, $ownerUserId, $ownerUserId, $actorSchoolId, $value);
         } elseif ($key === 'saved') {
-            $items = plc_sync_saved($db, $ownerUserId, $ownerUserId, $actorRole, $value);
+            $items = plc_sync_saved($db, $ownerUserId, $ownerUserId, $actorSchoolId, $actorRole, $value);
         } else {
             plc_json(['ok' => false, 'error' => 'invalid_key'], 400);
         }
@@ -993,11 +1051,11 @@ try {
             plc_json(['ok' => false, 'error' => 'invalid_item'], 400);
         }
         if ($key === 'rooms') {
-            $updatedItem = plc_upsert_room($db, $ownerUserId, $item);
+            $updatedItem = plc_upsert_room($db, $ownerUserId, $actorSchoolId, $item);
         } elseif ($key === 'classes') {
-            $updatedItem = plc_upsert_class($db, $ownerUserId, $item);
+            $updatedItem = plc_upsert_class($db, $ownerUserId, $actorSchoolId, $item);
         } elseif ($key === 'saved') {
-            $updatedItem = plc_upsert_saved($db, $ownerUserId, $ownerUserId, $item);
+            $updatedItem = plc_upsert_saved($db, $ownerUserId, $ownerUserId, $actorSchoolId, $item);
         } else {
             plc_json(['ok' => false, 'error' => 'invalid_key'], 400);
         }

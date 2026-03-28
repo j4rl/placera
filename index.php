@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/crypto.php';
+require_once __DIR__ . '/includes/twofa.php';
 
 function plc_login_throttle_key(string $identity): string
 {
@@ -103,6 +105,16 @@ function plc_login_slowdown(): void
     usleep(random_int(150000, 320000));
 }
 
+function plc_clear_login_2fa_state(): void
+{
+    unset($_SESSION['plc_2fa_login_user_id'], $_SESSION['plc_2fa_login_time'], $_SESSION['plc_2fa_login_throttle_key']);
+}
+
+function plc_clear_enroll_2fa_state(): void
+{
+    unset($_SESSION['plc_2fa_enroll_user_id'], $_SESSION['plc_2fa_enroll_time'], $_SESSION['plc_2fa_enroll_secret']);
+}
+
 if (plc_current_user()) {
     plc_redirect('app.php');
 }
@@ -110,13 +122,99 @@ if (plc_current_user()) {
 $err = '';
 $ok = '';
 
+if (isset($_GET['cancel2fa']) && $_GET['cancel2fa'] === '1') {
+    plc_clear_login_2fa_state();
+    plc_redirect('index.php');
+}
+
+$twofaChallengeUserId = isset($_SESSION['plc_2fa_login_user_id']) ? (int)$_SESSION['plc_2fa_login_user_id'] : 0;
+$twofaChallengeAt = isset($_SESSION['plc_2fa_login_time']) ? (int)$_SESSION['plc_2fa_login_time'] : 0;
+$twofaChallengeActive = $twofaChallengeUserId > 0 && $twofaChallengeAt > 0 && ($twofaChallengeAt + (15 * 60)) >= time();
+if (!$twofaChallengeActive) {
+    plc_clear_login_2fa_state();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $postStep = (string)($_POST['step'] ?? '');
     $csrf = (string)($_POST['_csrf'] ?? '');
     $sessionCsrf = (string)($_SESSION['plc_csrf'] ?? '');
     if ($sessionCsrf === '' || $csrf === '' || !hash_equals($sessionCsrf, $csrf)) {
         $err = 'Ogiltig begäran. Ladda om sidan och försök igen.';
+    } elseif ($postStep === '2fa_verify') {
+        if (!$twofaChallengeActive) {
+            $err = '2FA-sessionen har gått ut. Logga in igen.';
+            plc_clear_login_2fa_state();
+        } else {
+            $db = plc_db();
+            plc_ensure_multischool_schema($db);
+            $code = (string)($_POST['twofa_code'] ?? '');
+
+            $stmt = $db->prepare(
+                'SELECT u.id, u.password_hash, u.status, u.role, u.school_id, u.twofa_enabled, u.twofa_secret,
+                        s.status AS school_status, s.require_2fa AS school_require_2fa
+                 FROM plc_users u
+                 LEFT JOIN plc_schools s ON s.id = u.school_id
+                 WHERE u.id = ?
+                 LIMIT 1'
+            );
+            $stmt->bind_param('i', $twofaChallengeUserId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            if (!$row) {
+                $err = 'Användaren hittades inte.';
+                plc_clear_login_2fa_state();
+            } else {
+                $status = (string)($row['status'] ?? '');
+                $role = (string)($row['role'] ?? '');
+                $schoolId = (int)($row['school_id'] ?? 0);
+                $schoolStatus = (string)($row['school_status'] ?? '');
+                $schoolRequire2FA = (int)($row['school_require_2fa'] ?? 0) === 1;
+                $twofaEnabled = (int)($row['twofa_enabled'] ?? 0) === 1;
+                $requires2FA = $twofaEnabled || ($role !== 'superadmin' && $schoolRequire2FA);
+
+                if ($status !== 'approved') {
+                    $err = 'Kontot är inte längre aktivt.';
+                    plc_clear_login_2fa_state();
+                } elseif ($role !== 'superadmin' && ($schoolId <= 0 || $schoolStatus !== 'approved')) {
+                    $err = 'Skolan är inte godkänd ännu.';
+                    plc_clear_login_2fa_state();
+                } elseif (!$requires2FA) {
+                    plc_clear_login_2fa_state();
+                    plc_login_user((int)$row['id']);
+                    plc_redirect('app.php');
+                } else {
+                    $secretEncrypted = (string)($row['twofa_secret'] ?? '');
+                    $secret = plc_decrypt_text($secretEncrypted);
+                    if (!$twofaEnabled || $secret === '') {
+                        $err = '2FA är inte korrekt konfigurerat. Kontakta skoladmin.';
+                    } elseif (!plc_twofa_verify_code($secret, $code) && !plc_twofa_consume_backup_code($db, (int)$row['id'], $code)) {
+                        plc_login_slowdown();
+                        $throttleKey = (string)($_SESSION['plc_2fa_login_throttle_key'] ?? '');
+                        if ($throttleKey !== '') {
+                            $penalty = plc_login_register_failure($throttleKey);
+                            $err = $penalty > 0
+                                ? 'Fel 2FA-kod eller backupkod. Vänta ' . $penalty . ' sekunder och försök igen.'
+                                : 'Fel 2FA-kod eller backupkod.';
+                        } else {
+                            $err = 'Fel 2FA-kod eller backupkod.';
+                        }
+                    } else {
+                        $throttleKey = (string)($_SESSION['plc_2fa_login_throttle_key'] ?? '');
+                        if ($throttleKey !== '') {
+                            plc_login_clear_throttle($throttleKey);
+                        }
+                        plc_clear_login_2fa_state();
+                        plc_login_user((int)$row['id']);
+                        plc_redirect('app.php');
+                    }
+                }
+            }
+        }
     } else {
+        plc_clear_login_2fa_state();
+        plc_clear_enroll_2fa_state();
         $db = plc_db();
+        plc_ensure_multischool_schema($db);
         $identity = trim((string)($_POST['identity'] ?? ''));
         $password = (string)($_POST['password'] ?? '');
         $throttleKey = plc_login_throttle_key($identity);
@@ -125,7 +223,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($wait > 0) {
             $err = 'För många inloggningsförsök. Vänta ' . $wait . ' sekunder och försök igen.';
         } else {
-            $stmt = $db->prepare('SELECT id, password_hash, status FROM plc_users WHERE username = ? OR email = ? LIMIT 1');
+            $stmt = $db->prepare(
+                'SELECT u.id, u.password_hash, u.status, u.role, u.school_id, u.twofa_enabled, u.twofa_secret,
+                        s.status AS school_status, s.require_2fa AS school_require_2fa
+                 FROM plc_users u
+                 LEFT JOIN plc_schools s ON s.id = u.school_id
+                 WHERE u.username = ? OR u.email = ?
+                 LIMIT 1'
+            );
             $stmt->bind_param('ss', $identity, $identity);
             $stmt->execute();
             $row = $stmt->get_result()->fetch_assoc();
@@ -151,9 +256,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     plc_login_register_failure($throttleKey);
                     $err = 'Kontot är avstängt.';
                 } else {
-                    plc_login_clear_throttle($throttleKey);
-                    plc_login_user((int)$row['id']);
-                    plc_redirect('app.php');
+                    $role = (string)($row['role'] ?? '');
+                    $schoolId = (int)($row['school_id'] ?? 0);
+                    $schoolStatus = (string)($row['school_status'] ?? '');
+                    $schoolRequire2FA = (int)($row['school_require_2fa'] ?? 0) === 1;
+                    $twofaEnabled = (int)($row['twofa_enabled'] ?? 0) === 1;
+                    if ($role !== 'superadmin' && ($schoolId <= 0 || $schoolStatus !== 'approved')) {
+                        plc_login_slowdown();
+                        plc_login_register_failure($throttleKey);
+                        $err = 'Skolan är inte godkänd ännu.';
+                    } else {
+                        $requires2FA = $twofaEnabled || ($role !== 'superadmin' && $schoolRequire2FA);
+                        if ($requires2FA) {
+                            if ($twofaEnabled) {
+                                $_SESSION['plc_2fa_login_user_id'] = (int)$row['id'];
+                                $_SESSION['plc_2fa_login_time'] = time();
+                                $_SESSION['plc_2fa_login_throttle_key'] = $throttleKey;
+                                plc_redirect('index.php?step=2fa');
+                            } else {
+                                $_SESSION['plc_2fa_enroll_user_id'] = (int)$row['id'];
+                                $_SESSION['plc_2fa_enroll_time'] = time();
+                                plc_redirect('twofa_enroll.php');
+                            }
+                        } else {
+                            plc_login_clear_throttle($throttleKey);
+                            plc_login_user((int)$row['id']);
+                            plc_redirect('app.php');
+                        }
+                    }
                 }
             }
         }
@@ -164,6 +294,14 @@ $registered = isset($_GET['registered']) && $_GET['registered'] === '1';
 if ($registered) {
     $ok = 'Ansökan skickad. En admin behöver godkänna ditt konto innan inloggning.';
 }
+$resetDone = isset($_GET['reset']) && $_GET['reset'] === '1';
+if ($resetDone) {
+    $ok = 'Lösenordet är uppdaterat. Du kan nu logga in.';
+}
+
+$twofaChallengeUserId = isset($_SESSION['plc_2fa_login_user_id']) ? (int)$_SESSION['plc_2fa_login_user_id'] : 0;
+$twofaChallengeAt = isset($_SESSION['plc_2fa_login_time']) ? (int)$_SESSION['plc_2fa_login_time'] : 0;
+$showTwofaForm = $twofaChallengeUserId > 0 && $twofaChallengeAt > 0 && ($twofaChallengeAt + (15 * 60)) >= time();
 
 $csrf = plc_csrf_token();
 ?>
@@ -218,19 +356,34 @@ $csrf = plc_csrf_token();
           <div class="msg ok"><?= htmlspecialchars($ok, ENT_QUOTES, 'UTF-8') ?></div>
         <?php endif; ?>
 
-        <h2>Logga in</h2>
-        <form method="post">
-          <input type="hidden" name="_csrf" value="<?= htmlspecialchars($csrf, ENT_QUOTES, 'UTF-8') ?>">
-          <div class="fg">
-            <label>Användarnamn eller e-post</label>
-            <input type="text" name="identity" required>
-          </div>
-          <div class="fg">
-            <label>Lösenord</label>
-            <input type="password" name="password" required>
-          </div>
-          <button class="btn-primary" type="submit">Logga in</button>
-        </form>
+        <?php if ($showTwofaForm): ?>
+          <h2>Verifiera 2FA</h2>
+          <form method="post">
+            <input type="hidden" name="_csrf" value="<?= htmlspecialchars($csrf, ENT_QUOTES, 'UTF-8') ?>">
+            <input type="hidden" name="step" value="2fa_verify">
+            <div class="fg">
+              <label>2FA-kod eller backupkod</label>
+              <input type="text" name="twofa_code" inputmode="numeric" autocomplete="one-time-code" required>
+            </div>
+            <button class="btn-primary" type="submit">Verifiera</button>
+          </form>
+          <a class="register-link" href="index.php?cancel2fa=1">Avbryt och börja om</a>
+        <?php else: ?>
+          <h2>Logga in</h2>
+          <form method="post">
+            <input type="hidden" name="_csrf" value="<?= htmlspecialchars($csrf, ENT_QUOTES, 'UTF-8') ?>">
+            <div class="fg">
+              <label>Användarnamn eller e-post</label>
+              <input type="text" name="identity" required>
+            </div>
+            <div class="fg">
+              <label>Lösenord</label>
+              <input type="password" name="password" required>
+            </div>
+            <button class="btn-primary" type="submit">Logga in</button>
+          </form>
+          <a class="register-link" href="forgot_password.php">Glömt lösenord?</a>
+        <?php endif; ?>
         <p class="small">Saknar du konto?</p>
         <a class="register-link" href="register.php">Skicka registreringsansökan</a>
       </div>

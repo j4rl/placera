@@ -5,11 +5,14 @@ const API_HEADERS={
   'X-CSRF-Token':APP_BOOT.csrf||''
 };
 let currentUser=APP_BOOT.user||null;
-let isSiteAdmin=(currentUser?.role||'')==='admin';
+let isSuperAdmin=(currentUser?.role||'')==='superadmin';
+let isSiteAdmin=isSuperAdmin||(currentUser?.role||'')==='school_admin';
 let serverState={rooms:[],classes:[],saved:[]};
 let persistQueue=Promise.resolve();
 let teacherPlacementSelection={roomIds:[],classIds:[]};
 let teacherSelectionPersistQueue=Promise.resolve();
+let twofaProfileState=null;
+let schoolSecurityState=null;
 const STATE_KEYS=['rooms','classes','saved'];
 const colorSchemeQuery=window.matchMedia('(prefers-color-scheme: dark)');
 const reducedMotionQuery=window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -187,6 +190,20 @@ function isTeacherUser(){
   return (currentUser?.role||'')==='teacher';
 }
 
+function isSchoolAdminUser(){
+  return (currentUser?.role||'')==='school_admin';
+}
+
+function isSuperAdminUser(){
+  return (currentUser?.role||'')==='superadmin';
+}
+
+function roleLabel(role){
+  if(role==='superadmin')return'Superadmin';
+  if(role==='school_admin')return'Skoladmin';
+  return'Lärare';
+}
+
 function getManageViewLabel(){
   return isSiteAdmin?'Admin':'Hantera';
 }
@@ -337,7 +354,7 @@ function updateUserBadge(){
   const nameEl=document.getElementById('user-name-text');
   const roleEl=document.getElementById('user-role-text');
   if(nameEl)nameEl.textContent=currentUser?.fullName||'';
-  if(roleEl)roleEl.textContent=currentUser?.role||'';
+  if(roleEl)roleEl.textContent=currentUser?.roleLabel||roleLabel(currentUser?.role||'');
 }
 
 // ═══════════════ NAV ═══════════════
@@ -345,10 +362,10 @@ function showView(n){
   adminIn=(n==='admin');
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
-  const views=['home','saved','admin','about'];
-  document.getElementById(n+'-view').classList.add('active');
-  const idx=views.indexOf(n);
-  if(idx>=0)document.querySelectorAll('.nav-btn')[idx].classList.add('active');
+  const viewEl=document.getElementById(n+'-view');
+  if(viewEl)viewEl.classList.add('active');
+  const navBtn=document.querySelector(`.nav-btn[data-view="${n}"]`);
+  if(navBtn)navBtn.classList.add('active');
   if(n==='home')renderHome();
   if(n==='saved')renderSavedList();
   if(n==='profile')renderProfile();
@@ -849,13 +866,168 @@ function renderProfile(){
   const u=document.getElementById('profile-username');
   const f=document.getElementById('profile-fullname');
   const e=document.getElementById('profile-email');
+  const s=document.getElementById('profile-school');
   const p1=document.getElementById('profile-password1');
   const p2=document.getElementById('profile-password2');
   if(u)u.value=currentUser.username||'';
   if(f)f.value=currentUser.fullName||'';
   if(e)e.value=currentUser.email||'';
+  if(s)s.value=currentUser.schoolName||'';
   if(p1)p1.value='';
   if(p2)p2.value='';
+  void loadTwoFAState();
+}
+
+function renderTwoFAState(state){
+  const statusEl=document.getElementById('profile-2fa-status');
+  const setupWrap=document.getElementById('profile-2fa-setup-wrap');
+  const codeWrap=document.getElementById('profile-2fa-code-wrap');
+  const secretInput=document.getElementById('profile-2fa-secret');
+  const codeInput=document.getElementById('profile-2fa-code');
+  const startBtn=document.getElementById('profile-2fa-start-btn');
+  const confirmBtn=document.getElementById('profile-2fa-confirm-btn');
+  const cancelBtn=document.getElementById('profile-2fa-cancel-btn');
+  const disableBtn=document.getElementById('profile-2fa-disable-btn');
+  const backupWrap=document.getElementById('profile-backup-wrap');
+  const backupStatusEl=document.getElementById('profile-backup-status');
+  const backupCodesEl=document.getElementById('profile-backup-codes');
+  if(!statusEl||!setupWrap||!codeWrap||!secretInput||!codeInput||!startBtn||!confirmBtn||!cancelBtn||!disableBtn)return;
+
+  const enabled=!!state?.twofaEnabled;
+  const required=!!state?.schoolRequire2FA;
+  const inProgress=!!state?.setupInProgress;
+  const setupSecret=String(state?.setupSecret||'');
+
+  if(enabled){
+    statusEl.textContent=required
+      ?'2FA är aktiverad och krävs av din skola.'
+      :'2FA är aktiverad på ditt konto.';
+  }else{
+    statusEl.textContent=required
+      ?'Din skola kräver 2FA. Aktivera 2FA innan du loggar ut.'
+      :'2FA är inte aktiverad.';
+  }
+
+  setupWrap.style.display=inProgress?'':'none';
+  codeWrap.style.display=inProgress?'':'none';
+  secretInput.value=inProgress?setupSecret:'';
+  if(!inProgress)codeInput.value='';
+
+  startBtn.style.display=!enabled&&!inProgress?'':'none';
+  confirmBtn.style.display=inProgress?'':'none';
+  cancelBtn.style.display=inProgress?'':'none';
+  disableBtn.style.display=enabled&&!required?'':'none';
+
+  if(backupWrap&&backupStatusEl&&backupCodesEl){
+    backupWrap.style.display=enabled?'':'none';
+    const remaining=Number(state?.backupCodesRemaining||0);
+    backupStatusEl.textContent=`Backupkoder kvar: ${remaining}. Spara nya koder på en säker plats.`;
+    const codes=Array.isArray(state?.backupCodes)?state.backupCodes:[];
+    if(codes.length){
+      backupCodesEl.style.display='';
+      backupCodesEl.value=codes.join('\n');
+    }else{
+      backupCodesEl.style.display='none';
+      backupCodesEl.value='';
+    }
+  }
+}
+
+async function loadTwoFAState(){
+  const statusEl=document.getElementById('profile-2fa-status');
+  if(!statusEl)return;
+  try{
+    const data=await apiRequest('api/twofa.php');
+    twofaProfileState=data;
+    currentUser={...currentUser,twofaEnabled:!!data?.twofaEnabled,schoolRequire2FA:!!data?.schoolRequire2FA};
+    renderTwoFAState(data);
+  }catch(e){
+    console.error(e);
+    statusEl.textContent='Kunde inte läsa 2FA-status.';
+  }
+}
+
+async function startTwoFASetup(){
+  try{
+    const data=await apiRequest('api/twofa.php',{
+      method:'POST',
+      body:JSON.stringify({action:'start_setup'})
+    });
+    twofaProfileState=data;
+    currentUser={...currentUser,twofaEnabled:!!data?.twofaEnabled,schoolRequire2FA:!!data?.schoolRequire2FA};
+    renderTwoFAState(data);
+    showToast('2FA-setup startad.');
+  }catch(e){
+    console.error(e);
+    notifyError(e?.data?.message||'Kunde inte starta 2FA-setup.');
+  }
+}
+
+async function confirmTwoFASetup(){
+  const code=(document.getElementById('profile-2fa-code')?.value||'').trim();
+  if(!/^\d{6}$/.test(code)){notifyError('Ange en 6-siffrig 2FA-kod.');return}
+  try{
+    const data=await apiRequest('api/twofa.php',{
+      method:'POST',
+      body:JSON.stringify({action:'confirm_setup',code})
+    });
+    twofaProfileState=data;
+    currentUser={...currentUser,twofaEnabled:!!data?.twofaEnabled,schoolRequire2FA:!!data?.schoolRequire2FA};
+    renderTwoFAState(data);
+    updateUserBadge();
+    showToast('2FA aktiverad.');
+  }catch(e){
+    console.error(e);
+    notifyError(e?.data?.message||'Fel 2FA-kod.');
+  }
+}
+
+async function cancelTwoFASetup(){
+  try{
+    const data=await apiRequest('api/twofa.php',{
+      method:'POST',
+      body:JSON.stringify({action:'cancel_setup'})
+    });
+    twofaProfileState=data;
+    renderTwoFAState(data);
+  }catch(e){
+    console.error(e);
+    notifyError('Kunde inte avbryta 2FA-setup.');
+  }
+}
+
+async function disableTwoFA(){
+  if(!confirm('Inaktivera 2FA på ditt konto?'))return;
+  try{
+    const data=await apiRequest('api/twofa.php',{
+      method:'POST',
+      body:JSON.stringify({action:'disable'})
+    });
+    twofaProfileState=data;
+    currentUser={...currentUser,twofaEnabled:!!data?.twofaEnabled,schoolRequire2FA:!!data?.schoolRequire2FA};
+    renderTwoFAState(data);
+    updateUserBadge();
+    showToast('2FA inaktiverad.');
+  }catch(e){
+    console.error(e);
+    notifyError(e?.data?.message||'Kunde inte inaktivera 2FA.');
+  }
+}
+
+async function generateBackupCodes(){
+  if(!confirm('Skapa nya backupkoder? Gamla koder blir ogiltiga.'))return;
+  try{
+    const data=await apiRequest('api/twofa.php',{
+      method:'POST',
+      body:JSON.stringify({action:'generate_backup_codes'})
+    });
+    twofaProfileState=data;
+    renderTwoFAState(data);
+    showToast('Nya backupkoder skapade.');
+  }catch(e){
+    console.error(e);
+    notifyError(e?.data?.message||'Kunde inte skapa backupkoder.');
+  }
 }
 
 async function saveProfile(){
@@ -879,7 +1051,8 @@ async function saveProfile(){
       return;
     }
     currentUser=res.user;
-    isSiteAdmin=(currentUser?.role||'')==='admin';
+    isSuperAdmin=(currentUser?.role||'')==='superadmin';
+    isSiteAdmin=isSuperAdmin||(currentUser?.role||'')==='school_admin';
     updateUserBadge();
     renderProfile();
     showToast('✓ Profil sparad!');
@@ -908,6 +1081,7 @@ function adminLogout(){
   window.location.href='logout.php';
 }
 function aTab(t){
+  if(isSuperAdminUser())t='users';
   if(t==='users'&&!isSiteAdmin)t='rooms';
   const tabs=['rooms','classes','users'];
   document.querySelectorAll('.atab').forEach((b,i)=>b.classList.toggle('active',tabs[i]===t));
@@ -919,11 +1093,43 @@ function renderAdmin(){
   const login=document.getElementById('admin-login-screen');
   const panel=document.getElementById('admin-panel');
   const tabs=document.querySelectorAll('.atab');
+  const roomsTab=tabs[0]||null;
+  const classesTab=tabs[1]||null;
   const usersTab=tabs[2]||null;
+  const roomsSection=document.getElementById('asec-rooms');
+  const classesSection=document.getElementById('asec-classes');
   const usersSection=document.getElementById('asec-users');
 
   login.style.display='none';
   panel.style.display='block';
+  renderSchoolSecurityCard();
+
+  if(isSuperAdminUser()){
+    document.querySelectorAll('.atab').forEach((b,i)=>b.classList.toggle('active',i===2));
+    if(roomsTab)roomsTab.style.display='none';
+    if(classesTab)classesTab.style.display='none';
+    if(usersTab)usersTab.style.display='';
+    if(roomsSection){
+      roomsSection.style.display='none';
+      roomsSection.classList.remove('active');
+    }
+    if(classesSection){
+      classesSection.style.display='none';
+      classesSection.classList.remove('active');
+    }
+    if(usersSection){
+      usersSection.style.display='';
+      usersSection.classList.add('active');
+    }
+    loadAdminUsers().then(renderAdminUsersSection);
+    return;
+  }
+
+  if(roomsTab)roomsTab.style.display='';
+  if(classesTab)classesTab.style.display='';
+  if(roomsSection)roomsSection.style.display='';
+  if(classesSection)classesSection.style.display='';
+
   if(usersTab)usersTab.style.display=isSiteAdmin?'':'none';
   if(usersSection){
     usersSection.style.display=isSiteAdmin?'':'none';
@@ -935,6 +1141,9 @@ function renderAdmin(){
   renderClassList();
   if(isSiteAdmin){
     loadAdminUsers().then(renderAdminUsersSection);
+  }
+  if(isSchoolAdminUser()&&!isSuperAdminUser()){
+    void loadSchoolSecuritySettings();
   }
 }
 
@@ -956,6 +1165,51 @@ async function loadAdminUsers(){
   }
 }
 
+function renderSchoolSecurityCard(){
+  const card=document.getElementById('school-security-card');
+  const toggle=document.getElementById('school-require-2fa-toggle');
+  if(!card||!toggle)return;
+  if(isSchoolAdminUser()&&!isSuperAdminUser()){
+    card.style.display='';
+    toggle.checked=!!schoolSecurityState?.require2FA;
+  }else{
+    card.style.display='none';
+  }
+}
+
+async function loadSchoolSecuritySettings(){
+  if(!isSchoolAdminUser()||isSuperAdminUser())return;
+  try{
+    const data=await apiRequest('api/school_settings.php');
+    schoolSecurityState=data;
+    renderSchoolSecurityCard();
+  }catch(e){
+    console.error(e);
+    showToast(e?.data?.message||'Kunde inte läsa skolinställningar.');
+  }
+}
+
+async function saveSchoolSecuritySettings(){
+  if(!isSchoolAdminUser()||isSuperAdminUser())return;
+  const toggle=document.getElementById('school-require-2fa-toggle');
+  if(!toggle)return;
+  try{
+    const data=await apiRequest('api/school_settings.php',{
+      method:'POST',
+      body:JSON.stringify({require2FA:!!toggle.checked})
+    });
+    schoolSecurityState=data;
+    currentUser={...currentUser,schoolRequire2FA:!!data?.require2FA};
+    renderSchoolSecurityCard();
+    await loadTwoFAState();
+    showToast('Skolinställning sparad.');
+  }catch(e){
+    console.error(e);
+    showToast(e?.data?.message||'Kunde inte spara skolinställningen.');
+    renderSchoolSecurityCard();
+  }
+}
+
 function sortAdminUsers(users){
   const rank={pending:0,approved:1,disabled:2,rejected:3};
   return [...users].sort((a,b)=>{
@@ -974,15 +1228,25 @@ function upsertAdminUserCache(user){
   adminUsersCache=sortAdminUsers(next);
 }
 
-async function adminUserAction(action,userId,role='teacher'){
+async function adminUserAction(action,userId,role='teacher',extra={}){
   try{
-    const data=await apiRequest('api/admin_users.php',{method:'POST',body:JSON.stringify({action,userId,role})});
+    const data=await apiRequest('api/admin_users.php',{method:'POST',body:JSON.stringify({action,userId,role,...extra})});
     if(data?.user)upsertAdminUserCache(data.user);
+    if(action==='approve_school'&&!data?.user)await loadAdminUsers();
     renderAdminUsersSection();
+    if(action==='reset_2fa')showToast('2FA återställd för användaren.');
   }catch(e){
     console.error(e);
-    showToast('Kunde inte uppdatera användare.');
+    showToast(e?.data?.message||'Kunde inte uppdatera användare.');
   }
+}
+
+async function adminResetUserTwoFA(userId){
+  const user=findAdminUserById(userId);
+  if(!user)return;
+  const displayName=(user.fullName||user.username||'användaren').trim();
+  if(!confirm(`Återställ 2FA för ${displayName}? Användaren måste konfigurera 2FA på nytt.`))return;
+  await adminUserAction('reset_2fa',userId);
 }
 
 function findAdminUserById(userId){
@@ -999,10 +1263,28 @@ function openAdminUserModal(userId){
   document.getElementById('admin-user-email').value=u.email||'';
   document.getElementById('admin-user-role').value=u.role||'teacher';
   document.getElementById('admin-user-status').value=u.status||'approved';
+  document.getElementById('admin-user-school-name').value=u.schoolName||'';
+  document.getElementById('admin-user-school-status').value=u.schoolStatus||'pending';
   document.getElementById('admin-user-password1').value='';
   document.getElementById('admin-user-password2').value='';
-  document.getElementById('admin-user-role').disabled=self;
-  document.getElementById('admin-user-status').disabled=self;
+  const roleSel=document.getElementById('admin-user-role');
+  const statusSel=document.getElementById('admin-user-status');
+  const schoolNameInput=document.getElementById('admin-user-school-name');
+  const schoolStatusSel=document.getElementById('admin-user-school-status');
+  if(roleSel){
+    const canEditRole=isSuperAdminUser()&&!self;
+    roleSel.disabled=!canEditRole;
+    for(const opt of [...roleSel.options]){
+      if(!isSuperAdminUser()&&opt.value!=='teacher'){
+        opt.disabled=true;
+      }else{
+        opt.disabled=false;
+      }
+    }
+  }
+  if(statusSel)statusSel.disabled=self||(!isSuperAdminUser()&&u.role!=='teacher');
+  if(schoolNameInput)schoolNameInput.disabled=!isSuperAdminUser()||u.role==='superadmin';
+  if(schoolStatusSel)schoolStatusSel.disabled=!isSuperAdminUser()||u.role==='superadmin';
   openModal('admin-user-modal');
 }
 
@@ -1014,6 +1296,8 @@ async function saveAdminUserEdit(){
   const email=(document.getElementById('admin-user-email').value||'').trim();
   const role=(document.getElementById('admin-user-role').value||'teacher').trim();
   const status=(document.getElementById('admin-user-status').value||'approved').trim();
+  const schoolName=(document.getElementById('admin-user-school-name').value||'').trim();
+  const schoolStatus=(document.getElementById('admin-user-school-status').value||'pending').trim();
   const password=(document.getElementById('admin-user-password1').value||'');
   const password2=(document.getElementById('admin-user-password2').value||'');
 
@@ -1026,13 +1310,25 @@ async function saveAdminUserEdit(){
   try{
     const data=await apiRequest('api/admin_users.php',{
       method:'POST',
-      body:JSON.stringify({action:'update_user',userId,username,fullName,email,role,status,password,password2})
+      body:JSON.stringify({action:'update_user',userId,username,fullName,email,role,status,password,password2,schoolName,schoolStatus})
     });
     if(data?.user)upsertAdminUserCache(data.user);
     const updated=data?.user||findAdminUserById(userId);
     if(updated&&Number(currentUser?.id)===userId){
-      currentUser={...currentUser,username:updated.username,fullName:updated.fullName,email:updated.email,role:updated.role};
-      isSiteAdmin=(currentUser?.role||'')==='admin';
+      currentUser={
+        ...currentUser,
+        username:updated.username,
+        fullName:updated.fullName,
+        email:updated.email,
+        role:updated.role,
+        roleLabel:updated.roleLabel||roleLabel(updated.role),
+        schoolId:updated.schoolId||0,
+        schoolName:updated.schoolName||'',
+        schoolStatus:updated.schoolStatus||'',
+        twofaEnabled:!!updated.twofaEnabled,
+      };
+      isSuperAdmin=(currentUser?.role||'')==='superadmin';
+      isSiteAdmin=isSuperAdmin||(currentUser?.role||'')==='school_admin';
       updateUserBadge();
       renderProfile();
     }
@@ -1062,16 +1358,27 @@ function renderAdminUsersSection(){
   }else{
     pendingHost.innerHTML=pending.map(u=>{
       const created=fmtMetaDate(u.createdAt);
-      const meta=[u.email,created?`Ansökt ${created}`:''].filter(Boolean).join(' · ');
+      const schoolMeta=u.schoolName?`${u.schoolName}${u.schoolStatus?` (${u.schoolStatus})`:''}`:'Ingen skola';
+      const roleMeta=u.roleLabel||roleLabel(u.role);
+      const twofaMeta=u.twofaEnabled?'2FA aktiv':'2FA ej aktiv';
+      const meta=[u.email,roleMeta,schoolMeta,twofaMeta,created?`Ansökt ${created}`:''].filter(Boolean).join(' · ');
+      const schoolApproveBtn=isSuperAdminUser()&&u.schoolId&&u.schoolStatus!=='approved'
+        ?`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('approve_school',${u.id},'teacher',{schoolId:${Number(u.schoolId)}})">Godkänn skola</button>`
+        :'';
+      const approveRole=(u.role==='school_admin'||u.role==='superadmin')?u.role:'teacher';
+      const canApprove=isSuperAdminUser()||(isSchoolAdminUser()&&u.role==='teacher');
+      const openBtn=(isSuperAdminUser()||u.role==='teacher')
+        ?`<button class="btn btn-secondary btn-sm" onclick="openAdminUserModal(${u.id})">Öppna</button>`
+        :'';
       return`<div class="list-item">
         <div>
           <div class="li-name">${escH(u.fullName)} <span class="hint" style="margin:0">(@${escH(u.username)})</span></div>
           <div class="li-sub">${escH(meta)}</div>
         </div>
         <div class="flex gap2">
-          <button class="btn btn-secondary btn-sm" onclick="openAdminUserModal(${u.id})">Öppna</button>
-          <button class="btn btn-primary btn-sm" onclick="adminUserAction('approve',${u.id},'teacher')">Godkänn</button>
-          <button class="btn btn-danger btn-sm" onclick="adminUserAction('reject',${u.id})">Avslå</button>
+          ${openBtn}
+          ${schoolApproveBtn}
+          ${canApprove?`<button class="btn btn-primary btn-sm" onclick="adminUserAction('approve',${u.id},'${approveRole}')">Godkänn</button><button class="btn btn-danger btn-sm" onclick="adminUserAction('reject',${u.id})">Avslå</button>`:''}
         </div>
       </div>`;
     }).join('');
@@ -1086,27 +1393,55 @@ function renderAdminUsersSection(){
     const created=fmtMetaDate(u.createdAt);
     const approved=fmtMetaDate(u.approvedAt);
     const self=(u.id===Number(currentUser?.id));
+    const schoolApproval=fmtMetaDate(u.schoolApprovedAt);
+    const roleText=u.roleLabel||roleLabel(u.role);
+    const schoolAdminCanManage=isSchoolAdminUser()&&u.role==='teacher';
+    const canManageActions=!self&&(isSuperAdminUser()||schoolAdminCanManage);
+    const resetTwofaBtn=canManageActions&&u.twofaEnabled
+      ?`<button class="btn btn-secondary btn-sm" onclick="adminResetUserTwoFA(${u.id})">Återställ 2FA</button>`
+      :'';
     const meta=[
       u.email,
+      u.schoolName?`Skola: ${u.schoolName}${u.schoolStatus?` (${u.schoolStatus})`:''}`:'',
+      u.twofaEnabled?'2FA aktiv':'2FA ej aktiv',
       created?`Ansökt ${created}`:'',
-      approved?`Godkänd ${approved}${u.approvedByName?` av ${u.approvedByName}`:''}`:''
+      approved?`Godkänd ${approved}${u.approvedByName?` av ${u.approvedByName}`:''}`:'',
+      schoolApproval?`Skola godkänd ${schoolApproval}${u.schoolApprovedByName?` av ${u.schoolApprovedByName}`:''}`:''
     ].filter(Boolean).join(' · ');
-    const editBtn=`<button class="btn btn-secondary btn-sm" onclick="openAdminUserModal(${u.id})">Öppna</button>`;
+    const editBtn=(isSuperAdminUser()||schoolAdminCanManage)
+      ?`<button class="btn btn-secondary btn-sm" onclick="openAdminUserModal(${u.id})">Öppna</button>`
+      :'';
     let actions=editBtn;
-    if(u.status==='approved'&&!self){
-      const roleBtn=u.role==='admin'
-        ?`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('set_role',${u.id},'teacher')">Gör lärare</button>`
-        :`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('set_role',${u.id},'admin')">Gör admin</button>`;
-      actions=`${editBtn}${roleBtn}<button class="btn btn-danger btn-sm" onclick="adminUserAction('disable',${u.id})">Inaktivera</button>`;
-    }else if(u.status==='disabled'||u.status==='rejected'){
-      actions=`${editBtn}<button class="btn btn-secondary btn-sm" onclick="adminUserAction('enable',${u.id})">Aktivera</button>${
-        !self&&u.role!=='admin'?`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('set_role',${u.id},'admin')">Gör admin</button>`:''
-      }`;
+    if(u.status==='approved'&&canManageActions){
+      const disableBtn=`<button class="btn btn-danger btn-sm" onclick="adminUserAction('disable',${u.id})">Inaktivera</button>`;
+      const schoolBtn=isSuperAdminUser()&&u.schoolId&&u.role!=='superadmin'&&u.schoolStatus!=='approved'
+        ?`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('approve_school',${u.id},'teacher',{schoolId:${Number(u.schoolId)}})">Godkänn skola</button>`
+        :'';
+      let roleBtn='';
+      if(isSuperAdminUser()&&!self&&u.role!=='superadmin'){
+        roleBtn=u.role==='school_admin'
+          ?`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('set_role',${u.id},'teacher')">Gör lärare</button>`
+          :`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('set_role',${u.id},'school_admin')">Gör skoladmin</button>`;
+      }
+      actions=`${editBtn}${schoolBtn}${roleBtn}${resetTwofaBtn}${disableBtn}`;
+    }else if((u.status==='disabled'||u.status==='rejected')&&canManageActions){
+      const schoolBtn=isSuperAdminUser()&&u.schoolId&&u.role!=='superadmin'&&u.schoolStatus!=='approved'
+        ?`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('approve_school',${u.id},'teacher',{schoolId:${Number(u.schoolId)}})">Godkänn skola</button>`
+        :'';
+      let roleBtn='';
+      if(isSuperAdminUser()&&!self&&u.role!=='superadmin'){
+        roleBtn=u.role==='school_admin'
+          ?`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('set_role',${u.id},'teacher')">Gör lärare</button>`
+          :`<button class="btn btn-secondary btn-sm" onclick="adminUserAction('set_role',${u.id},'school_admin')">Gör skoladmin</button>`;
+      }
+      actions=`${editBtn}${schoolBtn}<button class="btn btn-secondary btn-sm" onclick="adminUserAction('enable',${u.id})">Aktivera</button>${roleBtn}${resetTwofaBtn}`;
+    }else if(canManageActions&&resetTwofaBtn){
+      actions=`${editBtn}${resetTwofaBtn}`;
     }
     return`<div class="list-item">
       <div>
         <div class="li-name">${escH(u.fullName)} <span class="hint" style="margin:0">(@${escH(u.username)})</span></div>
-        <div class="li-sub">${escH(meta)} · Status: ${escH(u.status)} · Roll: ${escH(u.role)}</div>
+        <div class="li-sub">${escH(meta)} · Status: ${escH(u.status)} · Roll: ${escH(roleText)}</div>
       </div>
       <div class="flex gap2">${actions}</div>
     </div>`;
@@ -1115,6 +1450,10 @@ function renderAdminUsersSection(){
 
 function renderRoomList(){
   const rooms=getRooms(),el=document.getElementById('room-list');
+  if(isSuperAdminUser()){
+    el.innerHTML='<div class="empty"><div class="ico">👤</div><p>Superadmin hanterar inte salar.</p></div>';
+    return;
+  }
   const teacherNote=isTeacherUser()
     ?'<p class="hint admin-pick-note">Kryssa i vilka salar du vill kunna använda i Placera-vyn.</p>'
     :'';
@@ -1241,6 +1580,10 @@ async function deleteRoom(id){
 
 function renderClassList(){
   const classes=getClasses(),el=document.getElementById('class-list');
+  if(isSuperAdminUser()){
+    el.innerHTML='<div class="empty"><div class="ico">👤</div><p>Superadmin hanterar inte grupper.</p></div>';
+    return;
+  }
   const teacherNote=isTeacherUser()
     ?'<p class="hint admin-pick-note">Kryssa i vilka grupper du vill kunna använda i Placera-vyn.</p>'
     :'';
@@ -2148,7 +2491,8 @@ async function refreshStateFromServer(){
   serverState.saved=Array.isArray(data.saved)?data.saved:[];
   if(data.user){
     currentUser=data.user;
-    isSiteAdmin=(currentUser?.role||'')==='admin';
+    isSuperAdmin=(currentUser?.role||'')==='superadmin';
+    isSiteAdmin=isSuperAdmin||(currentUser?.role||'')==='school_admin';
     updateUserBadge();
   }
   if(isSiteAdmin)await loadAdminUsers();
@@ -2167,7 +2511,8 @@ async function initApp(){
     setTeacherPlacementSelection({roomIds:[],classIds:[]},{render:false});
   }
   adminIn=false;
-  renderHome();
+  if(isSuperAdminUser())showView('admin');
+  else renderHome();
 }
 
 initApp();

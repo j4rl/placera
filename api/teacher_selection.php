@@ -9,7 +9,12 @@ if (($user['role'] ?? '') !== 'teacher') {
 }
 
 $db = plc_db();
+plc_ensure_multischool_schema($db);
 $userId = (int)$user['id'];
+$userSchoolId = plc_user_school_id($user);
+if ($userSchoolId <= 0) {
+    plc_json(['ok' => false, 'error' => 'forbidden', 'message' => 'Användaren saknar godkänd skola.'], 403);
+}
 
 function plc_ensure_teacher_selection_table(mysqli $db): void
 {
@@ -94,7 +99,7 @@ function plc_normalize_public_id_list(mixed $raw): array
     return $out;
 }
 
-function plc_filter_existing_entity_ids(mysqli $db, int $userId, string $kind, array $ids): array
+function plc_filter_existing_entity_ids(mysqli $db, int $userId, int $schoolId, string $kind, array $ids): array
 {
     if (!$ids) {
         return [];
@@ -116,10 +121,12 @@ function plc_filter_existing_entity_ids(mysqli $db, int $userId, string $kind, a
     }
     $inList = implode(',', $quoted);
     $userIdSql = (string)(int)$userId;
+    $schoolIdSql = (string)(int)$schoolId;
     $sql = "SELECT {$alias}.public_id AS public_id
             FROM {$table} {$alias}
             JOIN plc_users ou ON ou.id = {$alias}.owner_user_id
             WHERE ou.status = 'approved'
+              AND ou.school_id = {$schoolIdSql}
               AND ({$alias}.visibility = 'shared' OR {$alias}.owner_user_id = {$userIdSql})
               AND {$alias}.public_id IN ({$inList})";
 
@@ -147,7 +154,7 @@ function plc_decode_json_list(?string $raw): array
     return is_array($decoded) ? $decoded : [];
 }
 
-function plc_fetch_teacher_selection(mysqli $db, int $userId): array
+function plc_fetch_teacher_selection(mysqli $db, int $userId, int $schoolId): array
 {
     $stmt = $db->prepare(
         'SELECT room_ids_json, class_ids_json
@@ -164,8 +171,8 @@ function plc_fetch_teacher_selection(mysqli $db, int $userId): array
 
     $roomIds = plc_normalize_public_id_list(plc_decode_json_list($row['room_ids_json']));
     $classIds = plc_normalize_public_id_list(plc_decode_json_list($row['class_ids_json']));
-    $roomIds = plc_filter_existing_entity_ids($db, $userId, 'room', $roomIds);
-    $classIds = plc_filter_existing_entity_ids($db, $userId, 'class', $classIds);
+    $roomIds = plc_filter_existing_entity_ids($db, $userId, $schoolId, 'room', $roomIds);
+    $classIds = plc_filter_existing_entity_ids($db, $userId, $schoolId, 'class', $classIds);
     return ['roomIds' => $roomIds, 'classIds' => $classIds];
 }
 
@@ -173,7 +180,7 @@ plc_ensure_teacher_selection_table($db);
 plc_ensure_entity_visibility_columns($db);
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $selection = plc_fetch_teacher_selection($db, $userId);
+    $selection = plc_fetch_teacher_selection($db, $userId, $userSchoolId);
     plc_json([
         'ok' => true,
         'roomIds' => $selection['roomIds'],
@@ -189,8 +196,8 @@ plc_verify_csrf_or_403();
 $body = plc_read_json_body();
 $roomIds = plc_normalize_public_id_list($body['roomIds'] ?? []);
 $classIds = plc_normalize_public_id_list($body['classIds'] ?? []);
-$roomIds = plc_filter_existing_entity_ids($db, $userId, 'room', $roomIds);
-$classIds = plc_filter_existing_entity_ids($db, $userId, 'class', $classIds);
+$roomIds = plc_filter_existing_entity_ids($db, $userId, $userSchoolId, 'room', $roomIds);
+$classIds = plc_filter_existing_entity_ids($db, $userId, $userSchoolId, 'class', $classIds);
 
 $roomIdsJson = json_encode($roomIds, JSON_UNESCAPED_UNICODE);
 $classIdsJson = json_encode($classIds, JSON_UNESCAPED_UNICODE);

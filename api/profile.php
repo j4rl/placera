@@ -5,6 +5,7 @@ require_once __DIR__ . '/../includes/auth.php';
 
 $authUser = plc_require_login(true);
 $db = plc_db();
+plc_ensure_multischool_schema($db);
 $userId = (int)$authUser['id'];
 
 function plc_profile_payload(array $row): array
@@ -15,15 +16,25 @@ function plc_profile_payload(array $row): array
         'fullName' => $row['full_name'],
         'email' => $row['email'],
         'role' => $row['role'],
+        'roleLabel' => plc_is_superadmin($row)
+            ? 'Superadmin'
+            : (plc_is_school_admin($row) ? 'Skoladmin' : 'Lärare'),
+        'schoolId' => (int)($row['school_id'] ?? 0),
+        'schoolName' => (string)($row['school_name'] ?? ''),
+        'schoolStatus' => (string)($row['school_status'] ?? ''),
+        'schoolRequire2FA' => (int)($row['school_require_2fa'] ?? 0) === 1,
+        'twofaEnabled' => (int)($row['twofa_enabled'] ?? 0) === 1,
     ];
 }
 
 function plc_fetch_profile(mysqli $db, int $userId): ?array
 {
     $stmt = $db->prepare(
-        'SELECT id, username, full_name, email, role
-         FROM plc_users
-         WHERE id = ?
+        'SELECT u.id, u.username, u.full_name, u.email, u.role, u.school_id, u.twofa_enabled,
+                s.name AS school_name, s.status AS school_status, s.require_2fa AS school_require_2fa
+         FROM plc_users u
+         LEFT JOIN plc_schools s ON s.id = u.school_id
+         WHERE u.id = ?
          LIMIT 1'
     );
     $stmt->bind_param('i', $userId);
