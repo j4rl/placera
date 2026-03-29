@@ -33,8 +33,10 @@ Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare
 ## Användar- och säkerhetsflöde
 
 - Nya användare skickar en ansökan om konto.
+- Vid registrering väljs skola från lista över befintliga skolor; alternativet `Registrera ny skola` är endast tillgängligt för kontotyp `Skoladmin`.
 - Skoladmin och superadmin kan godkänna/avslå ansökningar enligt behörighet.
 - Superadmin kan godkänna skoladmins och skolor.
+- Godkännande av en användare ändrar inte skolans status automatiskt; skolans status styrs av superadmins skolhantering.
 - Godkända användare på godkända skolor kan logga in och använda verktyget.
 - Frivillig 2FA för användare (TOTP).
 - Skola kan tvinga 2FA för alla användare via skolinställning.
@@ -52,6 +54,12 @@ Koden är öppen källkod och finns tillgänglig på GitHub.
 ---
 
 ## Uppdateringar
+
+### 2026-03-29
+
+- Ändring: Registreringsformuläret använder nu skol-dropdown med befintliga skolor.
+- Ändring: Alternativet `Registrera ny skola` finns i registrering men kan endast väljas när kontotypen är `Skoladmin`.
+- Ändring: Om användare registreras mot befintlig skola behålls skolans aktuella status; användargodkännande auto-godkänner inte längre skolan.
 
 ### 2026-03-28
 

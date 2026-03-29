@@ -273,13 +273,6 @@ try {
         );
         $stmt->bind_param('ssii', $status, $targetRole, $actorId, $targetId);
         $stmt->execute();
-
-        if ($isSuperadmin && $targetRole === 'school_admin') {
-            $schoolId = (int)($targetUser['schoolId'] ?? 0);
-            if ($schoolId > 0) {
-                plc_update_school_status($db, $schoolId, 'approved', $actorId);
-            }
-        }
     } elseif ($action === 'reject') {
         $status = 'rejected';
         $stmt = $db->prepare(
