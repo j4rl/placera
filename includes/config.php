@@ -22,3 +22,6 @@ define('PLC_DB_NAME', getenv('PLC_DB_NAME') ?: 'placera');
 define('PLC_DB_USER', getenv('PLC_DB_USER') ?: 'root');
 define('PLC_DB_PASS', getenv('PLC_DB_PASS') ?: '');
 define('PLC_DATA_KEY', getenv('PLC_DATA_KEY') ?: 'YTKkXAQ8S6bvCispIvz++NNhWzS5k/EOA8+BoRCwHSE=');
+define('PLC_BASE_URL', rtrim(getenv('PLC_BASE_URL') ?: 'https://mockelngymnasiet.com', '/'));
+define('PLC_MAIL_FROM', getenv('PLC_MAIL_FROM') ?: 'noreply@mockelngymnasiet.com');
+define('PLC_MAIL_FROM_NAME', getenv('PLC_MAIL_FROM_NAME') ?: 'Placera');

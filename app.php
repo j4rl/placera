@@ -106,6 +106,10 @@ $headerSchoolSuffix = $headerSchoolSuffix !== '' ? ' - ' . $headerSchoolSuffix :
     <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
       <button type="button" class="btn btn-secondary btn-sm" id="res-reshuffle-btn" onclick="doShuffle(true)">↺ Slumpa om</button>
       <button type="button" class="btn btn-primary btn-sm" id="save-placement-btn" onclick="openSaveModal()">💾 Spara placering</button>
+      <label class="print-perspective-option" title="Vänder bänkarnas positioner 180 grader men behåller namnen rättvända">
+        <input type="checkbox" id="print-teacher-perspective">
+        <span>Vy från katedern (180°)</span>
+      </label>
       <button type="button" class="btn btn-secondary btn-sm" id="print-btn" onclick="printDirect()">🖨 Skriv ut direkt</button>
       <button type="button" class="btn btn-secondary btn-sm" id="pdf-btn" onclick="exportPDF()">📄 Ladda ner PDF</button>
     </div>
@@ -143,18 +147,20 @@ $headerSchoolSuffix = $headerSchoolSuffix !== '' ? ' - ' . $headerSchoolSuffix :
     <div class="section-title">Om Placera</div>
     <div class="card about-copy">
       <h2>Placera</h2>
-      <p>Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare att snabbt skapa, slumpa, justera, spara och skriva ut elevplaceringar i olika salar.</p>
+      <p>Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare att snabbt skapa, slumpa, justera, spara och skriva ut elevplaceringar i olika salar, med stöd för flera skolor i samma installation.</p>
 
       <h3>Vem appen är till för</h3>
       <ul>
         <li>Lärare som behöver skapa och hantera sittplatser på ett snabbt och tydligt sätt.</li>
         <li>Arbetslag och ämneslag som vill kunna återanvända salar och placeringar.</li>
-        <li>Skoladministratörer som vill styra vilka användare som får tillgång till systemet.</li>
+        <li>Skoladministratörer som vill styra vilka användare som får tillgång till systemet på sin egen skola.</li>
+        <li>Superadmin som hanterar skolor och användarbehörigheter mellan skolor.</li>
       </ul>
 
       <h3>Vad appen gör</h3>
       <ul>
         <li>Hanterar grupper och elevlistor.</li>
+        <li>Importerar elevnamn till grupper från text/CSV/JSON/Excel med kolumnval och förhandsvisning.</li>
         <li>Hanterar salar och bänkplaceringar via visuell editor.</li>
         <li>Slumpar placeringar automatiskt utifrån vald grupp och sal.</li>
         <li>Låter användaren finjustera placeringar manuellt.</li>
@@ -162,24 +168,45 @@ $headerSchoolSuffix = $headerSchoolSuffix !== '' ? ' - ' . $headerSchoolSuffix :
         <li>Ger möjlighet till direktutskrift och nedladdning som PDF.</li>
       </ul>
 
+      <h3>Roller och skolor</h3>
+      <ul>
+        <li><code>teacher</code>: kan använda och hantera grupper/salar/placeringar inom sin skola enligt behörighet.</li>
+        <li><code>school_admin</code>: hanterar användare på sin egen skola.</li>
+        <li><code>superadmin</code>: hanterar användare och skolor globalt (inte grupper eller salar).</li>
+        <li>Data isoleras per skola så att användare arbetar inom sin egen skolkontext.</li>
+        <li>Endast skolor med status <code>Godkänd</code> tillåter vanliga användare att logga in.</li>
+        <li>Skoladmin kan logga in även när skolan inte är godkänd, men då i read-only-läge utan åtgärder.</li>
+      </ul>
+
       <h3>Användar- och säkerhetsflöde</h3>
       <ul>
         <li>Nya användare skickar en ansökan om konto.</li>
-        <li>Admin godkänner eller avslår ansökningar.</li>
-        <li>Godkända användare kan logga in och använda verktyget.</li>
+        <li>Vid registrering väljs skola från lista över befintliga skolor; alternativet <code>Registrera ny skola</code> är endast tillgängligt för kontotyp <code>Skoladmin</code>.</li>
+        <li>Skoladmin och superadmin kan godkänna/avslå ansökningar enligt behörighet.</li>
+        <li>Superadmin kan godkänna skoladmins och skolor.</li>
+        <li>Godkännande av en användare ändrar inte skolans status automatiskt; skolans status styrs av superadmins skolhantering.</li>
+        <li>Godkända användare på godkända skolor kan logga in och använda verktyget.</li>
+        <li>Frivillig 2FA för användare (TOTP).</li>
+        <li>Skola kan tvinga 2FA för alla användare via skolinställning.</li>
+        <li>Backupkoder för 2FA finns för återinloggning vid förlorad enhet.</li>
+        <li>Glömt lösenord-flöde finns med återställningstoken.</li>
         <li>Systemet sparar vem som skapat eller uppdaterat salar och placeringar, samt när det gjordes.</li>
         <li>Elevnamn i grupper och sparade placeringar krypteras i databasen.</li>
       </ul>
       <h3>Vem ligger bakom?</h3>
-      <p>Placera är byggd av Charlie Jarl – på fritiden. <br>
-      Tycker du den är bra? Säg det högt. Dela den. Använd den.<br>
-      Den är gratis av en anledning: bra saker ska inte gömmas bakom betalväggar.<br>
-      Men – vill du visa uppskattning på riktigt, så uppskattas en donation enormt. <br>
-      Helt frivilligt. Helt upp till dig. <br>
-      Skanna PayPal-koden nedan, om du vill, och betala det du tycker det är värt.</p>
-        <div style="margin-top:16px;width:100%;display:flex;justify-content:center">
-          <img src="includes/paypal_qr.png" alt="PayPal QR-kod" style="width:150px;height:auto">
+      <div id="about-donate">
+        <div>
+          Placera är byggd av Charlie Jarl – på fritiden. <br>
+          Tycker du den är bra? Säg det högt. Dela den. Använd den.<br>
+          Den är gratis av en anledning: bra saker ska inte gömmas bakom betalväggar.<br>
+          Men – vill du visa uppskattning på riktigt, så uppskattas en donation enormt. <br>
+          Helt frivilligt. Helt upp till dig. <br>
+          Skanna PayPal-koden, om du vill, och betala det du tycker det är värt.
         </div>
+        <div>
+          <img src="includes/paypal_qr.png" alt="PayPal QR-kod">
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -602,4 +629,3 @@ window.APP_BOOT=<?= json_encode($boot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_S
 <script src="app.js"></script>
 </body>
 </html>
-

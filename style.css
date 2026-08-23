@@ -32,6 +32,7 @@
   --delete-confirm-text: #9b1f1f;
 }
 
+
 html[data-theme="dark"] {
   --bg: #0f0f11;
   --surface: #1a1a1f;
@@ -330,6 +331,40 @@ main {
   font-size: .82rem;
   color: var(--text);
   line-height: 1.5
+}
+
+#about-donate {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: nowrap
+}
+
+#about-donate>div:first-child {
+  flex: 1 1 auto
+}
+
+#about-donate>div:last-child {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center
+}
+
+#about-donate img {
+  width: 150px;
+  max-width: 100%;
+  height: auto;
+  display: block
+}
+
+@media (max-width: 760px) {
+  #about-donate {
+    flex-direction: column
+  }
+
+  #about-donate>div:last-child {
+    justify-content: flex-start
+  }
 }
 
 .section-title {
@@ -906,6 +941,27 @@ hr {
   transform-origin: center;
   user-select: none;
   transition: box-shadow .15s, border-color .15s
+}
+
+.print-perspective-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: .72rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.print-perspective-option input {
+  margin: 0;
+  accent-color: var(--accent);
 }
 
 .res-desk .dnum {
@@ -1746,6 +1802,7 @@ hr {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
@@ -1796,6 +1853,7 @@ hr {
   #edit-mode-btn,
   #res-back-btn,
   #res-reshuffle-btn,
+  .print-perspective-option,
   .btn,
   .confetti-wrap,
   body::before {
@@ -1827,11 +1885,23 @@ hr {
     color: #555 !important;
   }
 
+  #about-donate {
+    display: flex !important;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 1rem;
+  }
+
+  #about-donate div {
+    flex: 1;
+  }
+
   .board-bar {
     background: #e0f0e0 !important;
     border-color: #aaa !important;
     color: #222 !important;
     -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   .res-desk {
@@ -1839,6 +1909,7 @@ hr {
     border: 2px solid #5a8a10 !important;
     color: #2a5000 !important;
     -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   .res-desk.empty-d {
@@ -1869,6 +1940,14 @@ hr {
     page-break-before: avoid;
     break-inside: avoid-page;
     page-break-inside: avoid;
+  }
+
+  #result-layout-print-block.print-teacher-perspective #result-canvas {
+    transform: rotate(180deg);
+  }
+
+  #result-layout-print-block.print-teacher-perspective #result-canvas .res-desk {
+    transform: rotate(calc(var(--r, 0deg) - 180deg)) !important;
   }
 
   .result-list {

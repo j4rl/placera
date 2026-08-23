@@ -2,6 +2,16 @@
 
 Placera är ett digitalt verktyg för klassrumsplacering. Appen hjälper lärare att snabbt skapa, slumpa, justera, spara och skriva ut elevplaceringar i olika salar, med stöd för flera skolor i samma installation.
 
+## E-postkonfiguration
+
+Servern skickar e-post via PHP:s konfigurerade sendmail-transport. Följande miljövariabler kan anges:
+
+- `PLC_BASE_URL`: publik adress till installationen, utan avslutande snedstreck.
+- `PLC_MAIL_FROM`: avsändaradress på serverns egen domän.
+- `PLC_MAIL_FROM_NAME`: avsändarnamn, normalt `Placera`.
+
+Standardvärdena är anpassade för `https://mockelngymnasiet.com` och avsändaren `noreply@mockelngymnasiet.com`. Om Placera ligger i en underkatalog ska den ingå i `PLC_BASE_URL`.
+
 ## Vem appen är till för
 
 - Lärare som behöver skapa och hantera sittplatser på ett snabbt och tydligt sätt.

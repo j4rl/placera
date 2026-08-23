@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/password_reset.php';
+require_once __DIR__ . '/includes/mail.php';
 
 if (plc_current_user()) {
     plc_redirect('app.php');
@@ -57,11 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     );
                 if ($eligible) {
                     $token = plc_password_reset_create($db, (int)$row['id'], 60);
-                    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-                    $host = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
-                    $base = rtrim(dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/')), '/\\');
-                    $path = ($base === '' || $base === '/') ? '' : $base;
-                    $resetUrl = $scheme . '://' . $host . $path . '/reset_password.php?token=' . rawurlencode($token);
+                    $resetUrl = PLC_BASE_URL . '/reset_password.php?token=' . rawurlencode($token);
                     $mailTo = trim((string)($row['email'] ?? ''));
                     if ($mailTo !== '' && filter_var($mailTo, FILTER_VALIDATE_EMAIL)) {
                         $subject = 'Placera - Återställ lösenord';
@@ -69,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             . "Öppna länken nedan för att välja nytt lösenord (giltig i 60 minuter):\n\n"
                             . $resetUrl . "\n\n"
                             . "Om du inte begärde detta kan du ignorera mailet.";
-                        @mail($mailTo, $subject, $body);
+                        plc_send_mail($mailTo, $subject, $body);
                     }
                     if (plc_is_local_request()) {
                         $debugResetLink = $resetUrl;

@@ -2867,8 +2867,18 @@ function printDirect(){
     btn.textContent='⏳ Öppnar utskrift…';
     btn.disabled=true;
   }
+  const printBlock=document.getElementById('result-layout-print-block');
+  const teacherPerspective=document.getElementById('print-teacher-perspective')?.checked===true;
+  printBlock?.classList.toggle('print-teacher-perspective',teacherPerspective);
+  const cleanup=()=>{
+    printBlock?.classList.remove('print-teacher-perspective');
+    window.removeEventListener('afterprint',cleanup);
+  };
+  window.addEventListener('afterprint',cleanup);
   setTimeout(()=>{
     window.print();
+    // afterprint stöds inte konsekvent i alla webbläsare.
+    setTimeout(cleanup,500);
     if(btn){
       btn.textContent=orig||'🖨 Skriv ut direkt';
       btn.disabled=false;
@@ -2878,6 +2888,7 @@ function printDirect(){
 
 function buildPDF(){
   const {pairs}=shuffleResult;
+  const teacherPerspective=document.getElementById('print-teacher-perspective')?.checked===true;
   const title=document.getElementById('res-title').textContent;
   const sub=document.getElementById('res-sub').textContent;
 
@@ -2966,8 +2977,12 @@ function buildPDF(){
   // Desks
   const deskOriginY=layoutY+bh+4*scale;
   pairs.forEach((p,i)=>{
-    const dx=layoutX+(p.desk.x-minX+pad)*scale;
-    const dy=deskOriginY+(p.desk.y-minY)*scale;
+    const localX=p.desk.x-minX;
+    const localY=p.desk.y-minY;
+    const deskX=teacherPerspective?(maxX-minX-DW-localX):localX;
+    const deskY=teacherPerspective?(maxY-minY-DH-localY):localY;
+    const dx=layoutX+(deskX+pad)*scale;
+    const dy=deskOriginY+deskY*scale;
     const dw=DW*scale, dh=DH*scale;
     const rot=p.desk.rotation||0;
     const bg=p.student?deskBg:emptyBg;
