@@ -24,12 +24,17 @@ Standardvärdena är anpassade för `https://mockelngymnasiet.com` och avsändar
 - Hanterar grupper och elevlistor.
 - Importerar elevnamn till grupper från text/CSV/JSON/Excel med kolumnval och förhandsvisning.
 - Hanterar salar och bänkplaceringar via visuell editor.
+- Bänkstorlek kan väljas mellan 70 och 100 procent. Editorn har valbart rutnät och grundlayouter som 3-3-3, 2-4-2 och 4-2-4.
+- Snäpp till rutnät kan slås på och av oberoende av Visa rutnät. När snäppningen är på snäpper bänkar som dras eller släpps från poolen till ett rutnät på 12 pixlar, även när rutnätet är dolt. Det gör det lättare att få raka rader med mus och touch.
 - Slumpar placeringar automatiskt utifrån vald grupp och sal.
 - Låter användaren finjustera placeringar manuellt.
 - Sparar placeringar för senare användning.
+- Sparade placeringar är egna som standard. Ägaren kan dela dem med lärare på samma skola via sparadialogen eller knappen Dela under Placeringar, och återkalla delningen med Sluta dela. Andra lärare kan se delade placeringar och spara en egen kopia; originalet får bara ändras av ägaren.
 - Ger möjlighet till direktutskrift och nedladdning som PDF.
 
 ## Roller och skolor
+
+Vid första anropet till `api/state.php` uppdateras befintliga databaser automatiskt med kolumnen `plc_placements.visibility`. Befintliga placeringar blir egna tills ägaren väljer att dela dem. Delning av placeringar kräver inte att mottagaren har valt samma sal och grupp.
 
 - `teacher`: kan använda och hantera grupper/salar/placeringar inom sin skola enligt behörighet.
 - `school_admin`: hanterar användare på sin egen skola.

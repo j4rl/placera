@@ -931,9 +931,9 @@ hr {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: .72rem;
+  font-size: calc(.72rem * var(--desk-scale, 1));
   text-align: center;
-  padding: 6px 6px 4px;
+  padding: calc(6px * var(--desk-scale, 1)) calc(6px * var(--desk-scale, 1)) calc(4px * var(--desk-scale, 1));
   color: var(--desk-filled-text);
   font-weight: 600;
   line-height: 1.35;
@@ -1424,7 +1424,7 @@ hr {
 }
 
 .room-preview-num {
-  font-size: .76rem;
+  font-size: calc(.76rem * var(--desk-scale, 1));
   letter-spacing: .01em
 }
 
@@ -1654,8 +1654,13 @@ hr {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background-image: radial-gradient(circle, var(--grid-dot) 1px, transparent 1.2px);
-  background-size: 24px 24px;
+}
+
+#editor-canvas.show-grid {
+  background-image:
+    linear-gradient(to right, var(--grid-dot) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-dot) 1px, transparent 1px);
+  background-size: var(--editor-grid-size, 12px) var(--editor-grid-size, 12px);
   background-position: 0 0
 }
 
@@ -1710,7 +1715,7 @@ hr {
 }
 
 .canvas-desk .d-ico {
-  font-size: 1rem;
+  font-size: calc(1rem * var(--desk-scale, 1));
   pointer-events: none;
   line-height: 1
 }

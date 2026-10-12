@@ -360,6 +360,20 @@ const EDITOR_DW=80;
 const EDITOR_DH=50;
 const EDITOR_TOP_OFFSET=56;
 const EDITOR_SIDE_PAD=16;
+const EDITOR_GRID_SIZE=12;
+let editorDeskScale=1;
+
+function getDeskScale(d){
+  const scale=Number(d?.scale);
+  return Number.isFinite(scale)&&scale>=0.7&&scale<=1?scale:1;
+}
+
+function applyDeskDimensions(el,d){
+  const scale=getDeskScale(d);
+  el.style.width=(EDITOR_DW*scale)+'px';
+  el.style.height=(EDITOR_DH*scale)+'px';
+  el.style.setProperty('--desk-scale',scale);
+}
 
 function updateUserBadge(){
   const nameEl=document.getElementById('user-name-text');
@@ -499,7 +513,7 @@ function renderResult(fromSaved){
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   pairs.forEach(p=>{
     minX=Math.min(minX,p.desk.x);minY=Math.min(minY,p.desk.y);
-    maxX=Math.max(maxX,p.desk.x+80);maxY=Math.max(maxY,p.desk.y+50);
+    maxX=Math.max(maxX,p.desk.x+EDITOR_DW*getDeskScale(p.desk));maxY=Math.max(maxY,p.desk.y+EDITOR_DH*getDeskScale(p.desk));
   });
   canvas.style.width=(maxX-minX+pad*2)+'px';
   canvas.style.height=(maxY-minY+pad*2)+'px';
@@ -511,6 +525,7 @@ function renderResult(fromSaved){
     el.className='res-desk'+(p.student?'':' empty-d');
     el.dataset.idx=i;
     el.style.cssText=`left:${p.desk.x-minX+pad}px;top:${p.desk.y-minY+pad}px;transform:rotate(${r}deg);--r:${r}deg;animation-delay:${i*.025}s`;
+    applyDeskDimensions(el,p.desk);
     el.innerHTML=`<span class="dnum">${i+1}</span>${fmtName(p.student)}`;
     // drag events attached dynamically when edit mode is toggled
     canvas.appendChild(el);
@@ -722,6 +737,8 @@ function openSaveModal(){
   const dateStr=now.toLocaleDateString('sv-SE',{weekday:'short',day:'numeric',month:'short'});
   const defaultName=savedName||(cls.name&&room.name?`${cls.name} — ${room.name} (${dateStr})`:`Placering ${dateStr}`);
   document.getElementById('save-name-input').value=defaultName;
+  const existing=shuffleResult.savedEditable===false?null:getSaved().find(p=>p.id===shuffleResult.savedId);
+  document.getElementById('save-placement-shared').checked=existing?.visibility==='shared';
   openModal('save-modal');
   setTimeout(()=>{const inp=document.getElementById('save-name-input');inp.focus();inp.select();},80);
 }
@@ -738,6 +755,7 @@ async function confirmSavePlacement(){
   const entry={
     id:(!saveAsCopy&&savedId)?savedId:'pl_'+Date.now(),
     name,
+    visibility:document.getElementById('save-placement-shared').checked?'shared':'private',
     roomId:room.id||null,
     classId:cls.id||null,
     roomName:room.name,
@@ -745,7 +763,7 @@ async function confirmSavePlacement(){
     savedAt:now.toISOString(),
     pairs:pairs.map(p=>({
       student:p.student,
-      desk:{x:p.desk.x,y:p.desk.y,rotation:p.desk.rotation||0}
+      desk:{x:p.desk.x,y:p.desk.y,rotation:p.desk.rotation||0,scale:getDeskScale(p.desk)}
     }))
   };
 
@@ -778,6 +796,18 @@ function notifyError(msg){
   showToast('⚠ '+msg);
 }
 
+async function toggleSavedSharing(ownerUserId,id){
+  const entry=getSaved().find(p=>Number(p.ownerUserId)===Number(ownerUserId)&&p.id===id);
+  if(!entry||!canEditSavedPlacement(entry))return;
+  const visibility=entry.visibility==='shared'?'private':'shared';
+  try{
+    await queuePersistUpsert('saved',{...entry,visibility});
+    showToast(visibility==='shared'?'Placeringen delas nu med lärare på skolan.':'Delningen av placeringen har avslutats.');
+  }catch(e){
+    notifyError('Kunde inte ändra delningen.');
+  }
+}
+
 function renderSavedList(){
   const saved=getSaved();
   const el=document.getElementById('saved-list');
@@ -797,6 +827,10 @@ function renderSavedList(){
     const count=Array.isArray(p.pairs)?p.pairs.reduce((sum,pair)=>sum+(pair?.student?1:0),0):0;
     const byMeta=p.createdByName?` · skapad av ${escH(p.createdByName)}`:'';
     const lockMeta=canEdit?'':' · skrivskyddad';
+    const sharingMeta=p.visibility==='shared'?' · Delad på skolan':' · Egen';
+    const shareBtn=canEdit
+      ?`<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();toggleSavedSharing(${ownerUserId},'${safeId}')">${p.visibility==='shared'?'Sluta dela':'Dela'}</button>`
+      :'';
     const createdMeta=p.createdAt?` · ${escH(fmtMetaDate(p.createdAt))}`:'';
     const deleteBtn=canEdit
       ?`<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();confirmDeleteSaved('${domKey}')">🗑 Ta bort</button>`
@@ -808,13 +842,14 @@ function renderSavedList(){
       <button class="btn btn-secondary btn-sm" onclick="cancelDelete('${domKey}')">Avbryt</button>
     </div>`
       :'';
-    return`<div class="placement-item" id="pi_${domKey}" role="button" tabindex="0" onclick="openSavedPlacement(${ownerUserId},'${safeId}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSavedPlacement(${ownerUserId},'${safeId}')}">
+    return`<div class="placement-item" id="pi_${domKey}" role="button" tabindex="0" onclick="openSavedPlacement(${ownerUserId},'${safeId}')" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openSavedPlacement(${ownerUserId},'${safeId}')}">
       <div class="pi-main">
         <div class="pi-name">${escH(p.name)}</div>
-        <div class="pi-meta">${escH(p.className)} · ${escH(p.roomName)} · ${count} elever · ${dateStr}${byMeta}${lockMeta}${createdMeta}</div>
+        <div class="pi-meta">${escH(p.className)} · ${escH(p.roomName)} · ${count} elever · ${dateStr}${byMeta}${sharingMeta}${lockMeta}${createdMeta}</div>
       </div>
       <div class="pi-actions">
         <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();openSavedPlacement(${ownerUserId},'${safeId}')">Öppna</button>
+        ${shareBtn}
         ${deleteBtn}
       </div>
     </div>${confirmRow}`;
@@ -831,7 +866,7 @@ function openSavedPlacement(ownerUserId,id){
     cls:{name:entry.className,id:null},
     pairs:entry.pairs.map((p,i)=>({
       student:p.student,
-      desk:{x:p.desk.x,y:p.desk.y,rotation:p.desk.rotation||0}
+      desk:{x:p.desk.x,y:p.desk.y,rotation:p.desk.rotation||0,scale:getDeskScale(p.desk)}
     })),
     savedId:entry.id,
     savedName:entry.name,
@@ -1763,8 +1798,8 @@ function renderRoomPreview(room){
     const y=Number(d.y)||0;
     minX=Math.min(minX,x);
     minY=Math.min(minY,y);
-    maxX=Math.max(maxX,x+EDITOR_DW);
-    maxY=Math.max(maxY,y+EDITOR_DH);
+    maxX=Math.max(maxX,x+EDITOR_DW*getDeskScale(d));
+    maxY=Math.max(maxY,y+EDITOR_DH*getDeskScale(d));
   });
 
   const pad=22;
@@ -1780,6 +1815,7 @@ function renderRoomPreview(room){
     const rot=Number(d.rotation)||0;
     const el=document.createElement('div');
     el.className='room-preview-desk';
+    applyDeskDimensions(el,d);
     el.style.left=(x-minX+pad)+'px';
     el.style.top=(y-minY+pad)+'px';
     el.style.transform='rotate('+rot+'deg)';
@@ -2316,7 +2352,7 @@ function resetAll(){showToast('Global återställning är avstängd i serverläg
 function makeEditorDesk(){
   editorDeskIdSeq++;
   const id='d'+Date.now()+'_'+editorDeskIdSeq;
-  return {id,x:60,y:60,rotation:0,inPool:true};
+  return {id,x:60,y:60,rotation:0,scale:editorDeskScale,inPool:true};
 }
 
 function normalizeEditorDesk(d){
@@ -2330,6 +2366,7 @@ function normalizeEditorDesk(d){
     x:Number.isFinite(Number(d?.x))?Number(d.x):60,
     y:Number.isFinite(Number(d?.y))?Number(d.y):60,
     rotation:Number.isFinite(Number(d?.rotation))?Number(d.rotation):0,
+    scale:getDeskScale(d),
     inPool:!!d?.inPool
   };
 }
@@ -2373,9 +2410,29 @@ function setDeskCount(cnt){
 
 function renderEditor(){
   updateEditorDeskNumMap();
+  updateEditorGrid();
   renderEditorCanvas();
   renderPool();
   updateSelInfo();
+}
+
+function updateEditorGrid(){
+  const canvas=document.getElementById('editor-canvas');
+  if(!canvas)return;
+  canvas.style.setProperty('--editor-grid-size',EDITOR_GRID_SIZE+'px');
+  canvas.classList.toggle('show-grid',document.getElementById('editor-grid')?.checked===true);
+}
+
+function snapEditorDeskPosition(d,x,y,canvas){
+  const scale=getDeskScale(d);
+  if(document.getElementById('editor-snap')?.checked!==true){
+    d.x=clamp(x,0,Math.max(0,canvas.offsetWidth-EDITOR_DW*scale));
+    d.y=clamp(y,0,Math.max(0,canvas.offsetHeight-EDITOR_DH*scale));
+    return;
+  }
+  const snap=(value,max)=>clamp(Math.round(value/EDITOR_GRID_SIZE),0,Math.max(0,Math.floor(max/EDITOR_GRID_SIZE)))*EDITOR_GRID_SIZE;
+  d.x=snap(x,canvas.offsetWidth-EDITOR_DW*scale);
+  d.y=snap(y,canvas.offsetHeight-EDITOR_DH*scale);
 }
 
 function bindEditorInteractions(){
@@ -2396,8 +2453,7 @@ function bindEditorInteractions(){
     const desk=editorDesks.find(x=>x.id===id);
     if(!desk)return;
     const rect=canvas.getBoundingClientRect();
-    desk.x=clamp(e.clientX-rect.left-EDITOR_DW/2,0,canvas.offsetWidth-EDITOR_DW);
-    desk.y=clamp(e.clientY-rect.top-EDITOR_DH/2,0,canvas.offsetHeight-EDITOR_DH);
+    snapEditorDeskPosition(desk,e.clientX-rect.left-EDITOR_DW*getDeskScale(desk)/2,e.clientY-rect.top-EDITOR_DH*getDeskScale(desk)/2,canvas);
     desk.inPool=false;
     renderEditor();
     selectDesk(id);
@@ -2436,6 +2492,8 @@ function openEditor(id){
   document.getElementById('editor-room-name').value=room?room.name:'';
   document.getElementById('editor-room-visibility').value=room?normalizeVisibility(room.visibility):'shared';
   selectedId=null;
+  editorDeskScale=getDeskScale(room?.desks?.[0]);
+  document.getElementById('desk-scale').value=String(editorDeskScale);
 
   if(room){
     editorDesks=(room.desks||[]).map(normalizeEditorDesk);
@@ -2461,27 +2519,42 @@ function applyCount(){
   renderEditor();
 }
 
+function applyDeskScale(){
+  editorDeskScale=getDeskScale({scale:document.getElementById('desk-scale').value});
+  const {W,H}=getEditorCanvasSize();
+  editorDesks.forEach(d=>{
+    d.scale=editorDeskScale;
+    d.x=clamp(d.x,0,Math.max(0,W-EDITOR_DW*editorDeskScale));
+    d.y=clamp(d.y,0,Math.max(0,H-EDITOR_DH*editorDeskScale));
+  });
+  renderEditor();
+}
+
 function autoArrange(){
   const {canvas,W,H}=getEditorCanvasSize();
   if(!canvas||!editorDesks.length)return;
   const total=editorDesks.length;
-  const availW=Math.max(EDITOR_DW,W-EDITOR_SIDE_PAD*2);
-  let cols=Math.max(1,Math.floor((availW+16)/(EDITOR_DW+16)));
+  const availW=Math.max((EDITOR_DW*editorDeskScale),W-EDITOR_SIDE_PAD*2);
+  let cols=Math.max(1,Math.floor((availW+16)/((EDITOR_DW*editorDeskScale)+16)));
   cols=Math.min(cols,total);
   const rows=Math.ceil(total/cols);
-  const gapX=cols>1?clamp(Math.floor((availW-cols*EDITOR_DW)/(cols-1)),8,24):0;
-  const availH=Math.max(EDITOR_DH,H-EDITOR_TOP_OFFSET-EDITOR_SIDE_PAD);
-  const gapY=rows>1?clamp(Math.floor((availH-rows*EDITOR_DH)/(rows-1)),10,26):0;
-  const totalW=cols*EDITOR_DW+(cols-1)*gapX;
-  const totalH=rows*EDITOR_DH+(rows-1)*gapY;
+  if(rows*EDITOR_DH*editorDeskScale+(rows-1)*10>H-EDITOR_TOP_OFFSET-EDITOR_SIDE_PAD){
+    notifyError('Alla bänkar får inte plats. Minska bänkstorleken eller antalet bänkar.');
+    return;
+  }
+  const gapX=cols>1?clamp(Math.floor((availW-cols*(EDITOR_DW*editorDeskScale))/(cols-1)),8,24):0;
+  const availH=Math.max((EDITOR_DH*editorDeskScale),H-EDITOR_TOP_OFFSET-EDITOR_SIDE_PAD);
+  const gapY=rows>1?clamp(Math.floor((availH-rows*(EDITOR_DH*editorDeskScale))/(rows-1)),10,26):0;
+  const totalW=cols*(EDITOR_DW*editorDeskScale)+(cols-1)*gapX;
+  const totalH=rows*(EDITOR_DH*editorDeskScale)+(rows-1)*gapY;
   const startX=Math.max(0,Math.round((W-totalW)/2));
-  const startY=clamp(Math.round((H-totalH)/2),EDITOR_TOP_OFFSET,Math.max(EDITOR_TOP_OFFSET,H-EDITOR_DH));
+  const startY=clamp(Math.round((H-totalH)/2),EDITOR_TOP_OFFSET,Math.max(EDITOR_TOP_OFFSET,H-(EDITOR_DH*editorDeskScale)));
 
   editorDesks.forEach((d,i)=>{
     const row=Math.floor(i/cols);
     const col=i%cols;
-    d.x=clamp(startX+col*(EDITOR_DW+gapX),0,W-EDITOR_DW);
-    d.y=clamp(startY+row*(EDITOR_DH+gapY),0,H-EDITOR_DH);
+    d.x=clamp(startX+col*((EDITOR_DW*editorDeskScale)+gapX),0,W-(EDITOR_DW*editorDeskScale));
+    d.y=clamp(startY+row*((EDITOR_DH*editorDeskScale)+gapY),0,H-(EDITOR_DH*editorDeskScale));
     d.rotation=0;
     d.inPool=false;
   });
@@ -2502,34 +2575,39 @@ function applyPresetLayout(){
   const slots=Math.min(60,colsPerRow*rows);
   document.getElementById('layout-rows').value=rows;
 
-  if(fitCount)setDeskCount(slots);
-  const placeCount=Math.min(editorDesks.length,slots);
+  const placeCount=fitCount?slots:Math.min(editorDesks.length,slots);
 
   const {canvas,W,H}=getEditorCanvasSize();
   if(!canvas||!placeCount)return;
-  if(colsPerRow*EDITOR_DW>W-8){
-    notifyError('Mönstret är för brett för arbetsytan. Välj färre kolumner.');
+  const aisleCount=Math.max(0,blocks.length-1);
+  const gapUnits=(colsPerRow-1)+aisleCount;
+  const usedRows=Math.ceil(placeCount/colsPerRow);
+  if(colsPerRow*EDITOR_DW*editorDeskScale+gapUnits*6>W-EDITOR_SIDE_PAD*2){
+    notifyError('Mönstret är för brett. Minska bänkstorleken eller välj färre kolumner.');
     return;
   }
+  if(usedRows*EDITOR_DH*editorDeskScale+(usedRows-1)*10>H-EDITOR_TOP_OFFSET-EDITOR_SIDE_PAD){
+    notifyError('Mönstret är för högt. Minska bänkstorleken eller välj färre rader.');
+    return;
+  }
+  if(fitCount)setDeskCount(slots);
 
-  const aisleCount=Math.max(0,blocks.length-1);
-  const gapUnits=Math.max(1,(colsPerRow-1)+aisleCount);
-  const availW=Math.max(0,W-EDITOR_SIDE_PAD*2-colsPerRow*EDITOR_DW);
-  const gapX=clamp(Math.floor(availW/gapUnits),6,24);
-  const totalW=colsPerRow*EDITOR_DW+(colsPerRow-1)*gapX+aisleCount*gapX;
+  const availW=Math.max(0,W-EDITOR_SIDE_PAD*2-colsPerRow*(EDITOR_DW*editorDeskScale));
+  const gapX=gapUnits?clamp(Math.floor(availW/gapUnits),6,24):0;
+  const totalW=colsPerRow*(EDITOR_DW*editorDeskScale)+(colsPerRow-1)*gapX+aisleCount*gapX;
   const startX=Math.max(0,Math.round((W-totalW)/2));
 
-  const availH=Math.max(0,H-EDITOR_TOP_OFFSET-EDITOR_SIDE_PAD-rows*EDITOR_DH);
-  const gapY=rows>1?clamp(Math.floor(availH/(rows-1)),10,26):0;
-  const totalH=rows*EDITOR_DH+(rows-1)*gapY;
-  const startY=clamp(Math.round((H-totalH)/2),EDITOR_TOP_OFFSET,Math.max(EDITOR_TOP_OFFSET,H-EDITOR_DH));
+  const availH=Math.max(0,H-EDITOR_TOP_OFFSET-EDITOR_SIDE_PAD-usedRows*(EDITOR_DH*editorDeskScale));
+  const gapY=usedRows>1?clamp(Math.floor(availH/(usedRows-1)),10,26):0;
+  const totalH=usedRows*(EDITOR_DH*editorDeskScale)+(usedRows-1)*gapY;
+  const startY=clamp(Math.round((H-totalH)/2),EDITOR_TOP_OFFSET,Math.max(EDITOR_TOP_OFFSET,H-(EDITOR_DH*editorDeskScale)));
 
   const xPositions=[];
   let x=startX;
   blocks.forEach((block,bi)=>{
     for(let i=0;i<block;i++){
-      xPositions.push(clamp(x,0,W-EDITOR_DW));
-      x+=EDITOR_DW+gapX;
+      xPositions.push(clamp(x,0,W-(EDITOR_DW*editorDeskScale)));
+      x+=(EDITOR_DW*editorDeskScale)+gapX;
     }
     if(bi<blocks.length-1)x+=gapX;
   });
@@ -2539,7 +2617,7 @@ function applyPresetLayout(){
       const row=Math.floor(i/colsPerRow);
       const col=i%colsPerRow;
       d.x=xPositions[col];
-      d.y=clamp(startY+row*(EDITOR_DH+gapY),0,H-EDITOR_DH);
+      d.y=clamp(startY+row*((EDITOR_DH*editorDeskScale)+gapY),0,H-(EDITOR_DH*editorDeskScale));
       d.rotation=0;
       d.inPool=false;
     }else{
@@ -2607,6 +2685,7 @@ function spawnDesk(d,canvas,num){
   const el=document.createElement('div');
   el.className='canvas-desk'+(d.id===selectedId?' selected':'');
   el.id='ced_'+d.id;
+  applyDeskDimensions(el,d);
   el.style.left=d.x+'px';
   el.style.top=d.y+'px';
   el.style.transform=`rotate(${d.rotation||0}deg)`;
@@ -2657,8 +2736,7 @@ function mouseDragDesk(e,d,el,canvas){
   const offX=e.clientX-rect.left-d.x;
   const offY=e.clientY-rect.top-d.y;
   function move(ev){
-    d.x=clamp(ev.clientX-rect.left-offX,0,canvas.offsetWidth-EDITOR_DW);
-    d.y=clamp(ev.clientY-rect.top-offY,0,canvas.offsetHeight-EDITOR_DH);
+    snapEditorDeskPosition(d,ev.clientX-rect.left-offX,ev.clientY-rect.top-offY,canvas);
     el.style.left=d.x+'px';
     el.style.top=d.y+'px';
     if(selectedId===d.id){
@@ -2684,8 +2762,7 @@ function touchDragDesk(e,d,el,canvas){
   function move(ev){
     ev.preventDefault();
     const tc=ev.touches[0];
-    d.x=clamp(tc.clientX-rect.left-offX,0,canvas.offsetWidth-EDITOR_DW);
-    d.y=clamp(tc.clientY-rect.top-offY,0,canvas.offsetHeight-EDITOR_DH);
+    snapEditorDeskPosition(d,tc.clientX-rect.left-offX,tc.clientY-rect.top-offY,canvas);
     el.style.left=d.x+'px';
     el.style.top=d.y+'px';
     if(selectedId===d.id){
@@ -2710,14 +2787,16 @@ function startPoolTouchDrag(e,d){
 
   const ghost=document.createElement('div');
   ghost.style.cssText='position:fixed;width:72px;height:50px;background:var(--surface);border:2px solid var(--accent2);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:.9rem;pointer-events:none;z-index:9990;opacity:.8;transition:none';
+  ghost.style.width=(EDITOR_DW*editorDeskScale)+'px';
+  ghost.style.height=(EDITOR_DH*editorDeskScale)+'px';
   ghost.textContent='🪑';
   document.body.appendChild(ghost);
 
   function move(ev){
     ev.preventDefault();
     const tc=ev.touches[0];
-    ghost.style.left=(tc.clientX-36)+'px';
-    ghost.style.top=(tc.clientY-25)+'px';
+    ghost.style.left=(tc.clientX-EDITOR_DW*editorDeskScale/2)+'px';
+    ghost.style.top=(tc.clientY-EDITOR_DH*editorDeskScale/2)+'px';
   }
   function end(ev){
     document.removeEventListener('touchmove',move);
@@ -2726,8 +2805,7 @@ function startPoolTouchDrag(e,d){
     const tc=ev.changedTouches[0];
     const rect=canvas.getBoundingClientRect();
     if(tc.clientX>=rect.left&&tc.clientX<=rect.right&&tc.clientY>=rect.top&&tc.clientY<=rect.bottom){
-      d.x=clamp(tc.clientX-rect.left-EDITOR_DW/2,0,canvas.offsetWidth-EDITOR_DW);
-      d.y=clamp(tc.clientY-rect.top-EDITOR_DH/2,0,canvas.offsetHeight-EDITOR_DH);
+      snapEditorDeskPosition(d,tc.clientX-rect.left-EDITOR_DW*getDeskScale(d)/2,tc.clientY-rect.top-EDITOR_DH*getDeskScale(d)/2,canvas);
       d.inPool=false;
       renderEditor();
       selectDesk(d.id);
@@ -2900,7 +2978,7 @@ function buildPDF(){
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   pairs.forEach(p=>{
     minX=Math.min(minX,p.desk.x); minY=Math.min(minY,p.desk.y);
-    maxX=Math.max(maxX,p.desk.x+DW); maxY=Math.max(maxY,p.desk.y+DH);
+    maxX=Math.max(maxX,p.desk.x+DW*getDeskScale(p.desk)); maxY=Math.max(maxY,p.desk.y+DH*getDeskScale(p.desk));
   });
   const pad=14, boardH_px=18;
   const layoutW=maxX-minX+pad*2;
@@ -2977,13 +3055,14 @@ function buildPDF(){
   // Desks
   const deskOriginY=layoutY+bh+4*scale;
   pairs.forEach((p,i)=>{
+    const deskScale=getDeskScale(p.desk);
     const localX=p.desk.x-minX;
     const localY=p.desk.y-minY;
-    const deskX=teacherPerspective?(maxX-minX-DW-localX):localX;
-    const deskY=teacherPerspective?(maxY-minY-DH-localY):localY;
+    const deskX=teacherPerspective?(maxX-minX-DW*deskScale-localX):localX;
+    const deskY=teacherPerspective?(maxY-minY-DH*deskScale-localY):localY;
     const dx=layoutX+(deskX+pad)*scale;
     const dy=deskOriginY+deskY*scale;
-    const dw=DW*scale, dh=DH*scale;
+    const dw=DW*deskScale*scale, dh=DH*deskScale*scale;
     const rot=p.desk.rotation||0;
     const bg=p.student?deskBg:emptyBg;
     const bd=p.student?deskBd:emptyBd;
@@ -2999,8 +3078,8 @@ function buildPDF(){
       const sp=name.indexOf(' ');
       const l1=sp>-1?name.slice(0,sp):name;
       const l2=sp>-1?name.slice(sp+1):'';
-      const fs=Math.max(5.2, 6.8*scale).toFixed(1);
-      const numFs=Math.max(3.5, 4*scale).toFixed(1);
+      const fs=Math.max(5.2, 6.8*scale*deskScale).toFixed(1);
+      const numFs=Math.max(3.5, 4*scale*deskScale).toFixed(1);
       // Desk number top-right
       s+=`BT /F2 ${numFs} Tf ${rgb(mutedC)} rg ${(dw/2-6).toFixed(2)} ${(dh/2-5).toFixed(2)} Td (${i+1}) Tj ET\n`;
       // Name centered, two lines

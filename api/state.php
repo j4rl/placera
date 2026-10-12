@@ -131,6 +131,12 @@ function plc_ensure_entity_visibility_columns(mysqli $db): void
         );
     }
 
+    $res = $db->query("SHOW COLUMNS FROM plc_placements LIKE 'visibility'");
+    if (!$res instanceof mysqli_result || $res->num_rows === 0) {
+        $db->query("ALTER TABLE plc_placements
+                    ADD COLUMN visibility ENUM('shared','private') NOT NULL DEFAULT 'private' AFTER pairs_json");
+    }
+
     $done = true;
 }
 
@@ -397,48 +403,9 @@ function plc_fetch_saved(mysqli $db, int $actorUserId, int $actorSchoolId, strin
 {
     $actorUserIdSql = (string)(int)$actorUserId;
     $actorSchoolIdSql = (string)(int)$actorSchoolId;
-    $whereParts = ["p.owner_user_id = {$actorUserIdSql}"];
-
-    if ($actorRole === 'teacher') {
-        $selection = plc_fetch_teacher_selected_ids_for_saved($db, $actorUserId);
-        if ($selection['roomIds'] && $selection['classIds']) {
-            $roomQuoted = [];
-            foreach ($selection['roomIds'] as $roomId) {
-                $roomQuoted[] = "'" . $db->real_escape_string($roomId) . "'";
-            }
-            $classQuoted = [];
-            foreach ($selection['classIds'] as $classId) {
-                $classQuoted[] = "'" . $db->real_escape_string($classId) . "'";
-            }
-            if ($roomQuoted && $classQuoted) {
-                $roomIn = implode(',', $roomQuoted);
-                $classIn = implode(',', $classQuoted);
-                $whereParts[] = "(p.owner_user_id <> {$actorUserIdSql}
-                    AND p.room_public_id IS NOT NULL AND p.room_public_id <> ''
-                    AND p.class_public_id IS NOT NULL AND p.class_public_id <> ''
-                    AND p.room_public_id IN ({$roomIn})
-                    AND p.class_public_id IN ({$classIn})
-                    AND EXISTS (
-                        SELECT 1
-                        FROM plc_rooms rs
-                        WHERE rs.owner_user_id = p.owner_user_id
-                          AND rs.public_id = p.room_public_id
-                          AND rs.visibility = 'shared'
-                    )
-                    AND EXISTS (
-                        SELECT 1
-                        FROM plc_classes cs
-                        WHERE cs.owner_user_id = p.owner_user_id
-                          AND cs.public_id = p.class_public_id
-                          AND cs.visibility = 'shared'
-                    ))";
-            }
-        }
-    }
-
-    $whereSql = implode(' OR ', $whereParts);
+    $whereSql = "p.owner_user_id = {$actorUserIdSql} OR p.visibility = 'shared'";
     $sql = "SELECT p.owner_user_id, p.public_id, p.name, p.room_name, p.class_name, p.room_public_id, p.class_public_id,
-                   p.pairs_json, p.saved_at, p.created_at, p.updated_at,
+                   p.pairs_json, p.visibility, p.saved_at, p.created_at, p.updated_at,
                    ou.full_name AS owner_name, cu.full_name AS created_by_name, uu.full_name AS updated_by_name
             FROM plc_placements p
             JOIN plc_users ou ON ou.id = p.owner_user_id
@@ -463,6 +430,7 @@ function plc_fetch_saved(mysqli $db, int $actorUserId, int $actorSchoolId, strin
             'className' => $row['class_name'],
             'roomId' => $row['room_public_id'],
             'classId' => $row['class_public_id'],
+            'visibility' => $row['visibility'],
             'pairs' => plc_decrypt_pairs(plc_decode_json_array($row['pairs_json'])),
             'savedAt' => $savedAt,
             'createdByName' => $row['created_by_name'],
@@ -478,16 +446,17 @@ function plc_fetch_saved_by_public_id(mysqli $db, int $actorUserId, int $actorSc
 {
     $stmt = $db->prepare(
         'SELECT p.owner_user_id, p.public_id, p.name, p.room_name, p.class_name, p.room_public_id, p.class_public_id,
-                p.pairs_json, p.saved_at, p.created_at, p.updated_at,
+                p.pairs_json, p.visibility, p.saved_at, p.created_at, p.updated_at,
                 ou.full_name AS owner_name, cu.full_name AS created_by_name, uu.full_name AS updated_by_name
          FROM plc_placements p
          JOIN plc_users ou ON ou.id = p.owner_user_id
          JOIN plc_users cu ON cu.id = p.created_by_user_id
          LEFT JOIN plc_users uu ON uu.id = p.updated_by_user_id
          WHERE ou.school_id = ? AND p.owner_user_id = ? AND p.public_id = ?
+           AND ou.status = \'approved\' AND (p.owner_user_id = ? OR p.visibility = \'shared\')
          LIMIT 1'
     );
-    $stmt->bind_param('iis', $actorSchoolId, $entityOwnerUserId, $publicId);
+    $stmt->bind_param('iisi', $actorSchoolId, $entityOwnerUserId, $publicId, $actorUserId);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     if (!$row) {
@@ -505,6 +474,7 @@ function plc_fetch_saved_by_public_id(mysqli $db, int $actorUserId, int $actorSc
         'className' => $row['class_name'],
         'roomId' => $row['room_public_id'],
         'classId' => $row['class_public_id'],
+        'visibility' => $row['visibility'],
         'pairs' => plc_decrypt_pairs(plc_decode_json_array($row['pairs_json'])),
         'savedAt' => $savedAt,
         'createdByName' => $row['created_by_name'],
@@ -659,6 +629,8 @@ function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $a
     $className = trim((string)($item['className'] ?? ''));
     $roomPublicId = trim((string)($item['roomId'] ?? ''));
     $classPublicId = trim((string)($item['classId'] ?? ''));
+    $visibility = array_key_exists('visibility', $item)
+        ? ((string)$item['visibility'] === 'shared' ? 'shared' : 'private') : null;
     $savedAtRaw = trim((string)($item['savedAt'] ?? ''));
     $savedAtTs = $savedAtRaw !== '' ? strtotime($savedAtRaw) : false;
     $savedAt = $savedAtTs !== false ? date('Y-m-d H:i:s', $savedAtTs) : date('Y-m-d H:i:s');
@@ -681,17 +653,18 @@ function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $a
         $stmt = $db->prepare(
             'UPDATE plc_placements
              SET name = ?, room_name = ?, class_name = ?, room_public_id = ?, class_public_id = ?,
-                 pairs_json = ?, saved_at = ?, updated_by_user_id = ?, updated_at = NOW()
+                 pairs_json = ?, visibility = COALESCE(?, visibility), saved_at = ?, updated_by_user_id = ?, updated_at = NOW()
              WHERE owner_user_id = ? AND public_id = ?'
         );
         $stmt->bind_param(
-            'sssssssiis',
+            'ssssssssiis',
             $name,
             $roomName,
             $className,
             $roomPublicId,
             $classPublicId,
             $pairsJson,
+            $visibility,
             $savedAt,
             $actorUserId,
             $ownerUserId,
@@ -708,11 +681,11 @@ function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $a
         $stmt = $db->prepare(
             'INSERT INTO plc_placements (
                 public_id, owner_user_id, name, room_name, class_name, room_public_id, class_public_id,
-                pairs_json, saved_at, created_by_user_id, updated_by_user_id
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)'
+                pairs_json, visibility, saved_at, created_by_user_id, updated_by_user_id
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, \'private\'), ?, ?, NULL)'
         );
         $stmt->bind_param(
-            'sisssssssi',
+            'sissssssssi',
             $publicId,
             $ownerUserId,
             $name,
@@ -721,6 +694,7 @@ function plc_upsert_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $a
             $roomPublicId,
             $classPublicId,
             $pairsJson,
+            $visibility,
             $savedAt,
             $actorUserId
         );
@@ -904,13 +878,13 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $act
     $ins = $db->prepare(
         'INSERT INTO plc_placements (
             public_id, owner_user_id, name, room_name, class_name, room_public_id, class_public_id,
-            pairs_json, saved_at, created_by_user_id, updated_by_user_id
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)'
+            pairs_json, visibility, saved_at, created_by_user_id, updated_by_user_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, \'private\'), ?, ?, NULL)'
     );
     $upd = $db->prepare(
         'UPDATE plc_placements
          SET name = ?, room_name = ?, class_name = ?, room_public_id = ?, class_public_id = ?,
-             pairs_json = ?, saved_at = ?, updated_by_user_id = ?, updated_at = NOW()
+             pairs_json = ?, visibility = COALESCE(?, visibility), saved_at = ?, updated_by_user_id = ?, updated_at = NOW()
          WHERE owner_user_id = ? AND public_id = ?'
     );
     $del = $db->prepare('DELETE FROM plc_placements WHERE owner_user_id = ? AND public_id = ?');
@@ -932,6 +906,8 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $act
         $className = trim((string)($item['className'] ?? ''));
         $roomPublicId = trim((string)($item['roomId'] ?? ''));
         $classPublicId = trim((string)($item['classId'] ?? ''));
+        $visibility = array_key_exists('visibility', $item)
+            ? ((string)$item['visibility'] === 'shared' ? 'shared' : 'private') : null;
         $savedAtRaw = trim((string)($item['savedAt'] ?? ''));
         $savedAtTs = $savedAtRaw !== '' ? strtotime($savedAtRaw) : false;
         $savedAt = $savedAtTs !== false ? date('Y-m-d H:i:s', $savedAtTs) : date('Y-m-d H:i:s');
@@ -951,13 +927,14 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $act
 
         if (isset($existing[$publicId])) {
             $upd->bind_param(
-                'sssssssiis',
+                'ssssssssiis',
                 $name,
                 $roomName,
                 $className,
                 $roomPublicId,
                 $classPublicId,
                 $pairsJson,
+                $visibility,
                 $savedAt,
                 $actorUserId,
                 $ownerUserId,
@@ -966,7 +943,7 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $act
             $upd->execute();
         } else {
             $ins->bind_param(
-                'sisssssssi',
+                'sissssssssi',
                 $publicId,
                 $ownerUserId,
                 $name,
@@ -975,6 +952,7 @@ function plc_sync_saved(mysqli $db, int $ownerUserId, int $actorUserId, int $act
                 $roomPublicId,
                 $classPublicId,
                 $pairsJson,
+                $visibility,
                 $savedAt,
                 $actorUserId
             );

@@ -467,6 +467,13 @@ $headerSchoolSuffix = $headerSchoolSuffix !== '' ? ' - ' . $headerSchoolSuffix :
       <label class="editor-toolbar-label" for="desk-count-input">Antal bänkar:</label>
       <input type="number" id="desk-count-input" value="20" min="1" max="60" style="width:66px">
       <button type="button" class="btn btn-secondary btn-sm" onclick="applyCount()">Tillämpa</button>
+      <label class="editor-toolbar-label" for="desk-scale">Bänkstorlek:</label>
+      <select id="desk-scale" style="width:84px" onchange="applyDeskScale()">
+        <option value="1">100%</option>
+        <option value="0.9">90%</option>
+        <option value="0.8">80%</option>
+        <option value="0.7">70%</option>
+      </select>
     </div>
     <div class="editor-toolbar-sep"></div>
     <div class="editor-toolbar-group">
@@ -476,6 +483,14 @@ $headerSchoolSuffix = $headerSchoolSuffix !== '' ? ' - ' . $headerSchoolSuffix :
         <option value="2-2-2">2-2-2</option>
         <option value="3-3">3-3</option>
         <option value="4-4">4-4</option>
+        <option value="1-1">1-1</option>
+        <option value="1-1-1">1-1-1</option>
+        <option value="2-2">2-2</option>
+        <option value="2-2-2-2">2-2-2-2</option>
+        <option value="2-4-2">2-4-2</option>
+        <option value="3-2-3">3-2-3</option>
+        <option value="3-3-3">3-3-3</option>
+        <option value="4-2-4">4-2-4</option>
       </select>
       <label class="editor-toolbar-label" for="layout-rows">Rader:</label>
       <input type="number" id="layout-rows" value="5" min="1" max="12" style="width:64px">
@@ -488,6 +503,14 @@ $headerSchoolSuffix = $headerSchoolSuffix !== '' ? ' - ' . $headerSchoolSuffix :
     <div class="editor-toolbar-sep"></div>
     <button type="button" class="btn btn-secondary btn-sm" onclick="autoArrange()">⊞ Auto-arrangera</button>
     <button type="button" class="btn btn-secondary btn-sm" onclick="clearCanvas()">⊡ Rensa canvas</button>
+    <label class="editor-check">
+      <input type="checkbox" id="editor-snap" checked>
+      Snäpp till rutnät
+    </label>
+    <label class="editor-check">
+      <input type="checkbox" id="editor-grid" onchange="updateEditorGrid()">
+      Visa rutnät
+    </label>
     <span class="hint editor-toolbar-hint">Dra bänkar från poolen till canvasen • Klicka för att markera • Rotera med ↻</span>
   </div>
 
@@ -612,6 +635,11 @@ $headerSchoolSuffix = $headerSchoolSuffix !== '' ? ' - ' . $headerSchoolSuffix :
     <input type="text" id="save-name-input" placeholder="t.ex. Måndag v.12, Prov NA22A…">
     <p class="hint">Lämna tomt för att använda datum och tid automatiskt.</p>
   </div>
+  <label class="editor-check">
+    <input type="checkbox" id="save-placement-shared">
+    Dela med andra lärare på skolan
+  </label>
+  <p class="hint">Delade placeringar visas under Placeringar. Andra lärare kan se dem, men bara du kan ändra originalet.</p>
   <div class="flex gap2" style="justify-content:flex-end;margin-top:14px">
     <button type="button" class="btn btn-secondary" onclick="closeModal('save-modal')">Avbryt</button>
     <button type="button" class="btn btn-primary" onclick="confirmSavePlacement()">💾 Spara</button>

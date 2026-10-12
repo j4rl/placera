@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS plc_placements (
   room_public_id VARCHAR(64) NULL,
   class_public_id VARCHAR(64) NULL,
   pairs_json LONGTEXT NOT NULL,
+  visibility ENUM('shared','private') NOT NULL DEFAULT 'private',
   saved_at DATETIME NULL,
   created_by_user_id INT UNSIGNED NOT NULL,
   updated_by_user_id INT UNSIGNED NULL,
